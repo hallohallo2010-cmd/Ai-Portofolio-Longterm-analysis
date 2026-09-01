@@ -7,3 +7,4 @@ yfinance
 kagglehub
 matplotlib
 requests
+pyarrow
