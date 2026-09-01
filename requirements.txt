@@ -6,3 +6,4 @@ lightgbm
 yfinance
 kagglehub
 matplotlib
+requests
