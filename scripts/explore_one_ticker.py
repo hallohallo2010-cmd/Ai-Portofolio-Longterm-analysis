@@ -15,13 +15,27 @@ Run:  python scripts/explore_one_ticker.py
 
 from __future__ import annotations
 
+import os
 import sys
 from datetime import date
 
 import numpy as np
 import pandas as pd
-import requests
 import yfinance as yf
+
+# src/ is a sibling of scripts/, so make the repo root importable.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+
+# All EDGAR access lives in src/data_loader.py; only the yfinance steps below
+# are local to this script.
+from src.data_loader import (  # noqa: E402
+    QUARTER_MAX_DAYS,
+    QUARTER_MIN_DAYS,
+    fail,
+    fetch_quarterly_eps,
+    load_ticker_cik_map,
+    resolve_cik,
+)
 
 # --------------------------------------------------------------------------
 # Configuration -- edit these, nothing below.
@@ -31,12 +45,6 @@ TICKER = "AAPL"
 START_DATE = "2005-01-01"
 END_DATE = date.today().isoformat()  # yfinance end is exclusive; today is fine
 
-# SEC EDGAR blocks requests that do not identify a real contact. Their fair-access
-# policy asks for "Sample Company Name AdminContact@example.com" style values.
-# REPLACE THIS with your own address or the script will refuse to call EDGAR.
-SEC_CONTACT_EMAIL = "REPLACE_ME@example.com"
-SEC_APP_NAME = "earnings-surprise-research"
-
 # A "gap" is more than this many business days between two consecutive sessions.
 # Normal weekend = 1 business-day step, so 5 comfortably clears holiday weeks.
 MAX_GAP_TRADING_DAYS = 5
@@ -44,52 +52,16 @@ MAX_GAP_TRADING_DAYS = 5
 # yfinance caps how far back earnings dates go; ask for more than we expect.
 EARNINGS_DATES_LIMIT = 200
 
-# A quarterly XBRL fact covers a ~3 month duration. Fiscal quarters are ragged
-# (13 weeks, 4-4-5 calendars, 52/53-week years), so accept a generous window.
-QUARTER_MIN_DAYS = 60
-QUARTER_MAX_DAYS = 110
-
-SEC_TICKER_MAP_URL = "https://www.sec.gov/files/company_tickers.json"
-SEC_CONCEPT_URL = (
-    "https://data.sec.gov/api/xbrl/companyconcept/"
-    "CIK{cik}/us-gaap/EarningsPerShareDiluted.json"
-)
-SEC_TIMEOUT_SECONDS = 30
-
-
 # --------------------------------------------------------------------------
 # Small helpers
 # --------------------------------------------------------------------------
 
 
-def fail(message: str) -> None:
-    """Abort loudly. Every empty/missing source funnels through here."""
-    print(f"\n*** FATAL: {message}", file=sys.stderr)
-    sys.exit(1)
-
-
 def section(title: str) -> None:
     """Visual separator so the four blocks of output stay distinguishable."""
-    print("\n" + "=" * 74)
+    print("\n" + "=" * 72)
     print(title)
-    print("=" * 74)
-
-
-def sec_headers() -> dict:
-    """Headers EDGAR requires. A missing/blank User-Agent gets a 403."""
-    if "REPLACE_ME" in SEC_CONTACT_EMAIL:
-        fail(
-            "SEC_CONTACT_EMAIL is still the placeholder. EDGAR requires a real "
-            "contact address in the User-Agent header; edit the constant at the "
-            "top of this script before running."
-        )
-    return {
-        # EDGAR's documented format: application name followed by a contact address.
-        "User-Agent": f"{SEC_APP_NAME} ({SEC_CONTACT_EMAIL})",
-        # EDGAR serves gzip; asking for it explicitly avoids oversized transfers.
-        "Accept-Encoding": "gzip, deflate",
-        "Accept": "application/json",
-    }
+    print("=" * 72)
 
 
 # --------------------------------------------------------------------------
@@ -199,67 +171,22 @@ def pull_earnings_dates() -> pd.DataFrame:
 # --------------------------------------------------------------------------
 
 
-def lookup_cik(ticker: str) -> tuple[str, str]:
-    """Resolve a ticker to its zero-padded 10-digit CIK via SEC's public map."""
-    response = requests.get(
-        SEC_TICKER_MAP_URL, headers=sec_headers(), timeout=SEC_TIMEOUT_SECONDS
-    )
-    if response.status_code != 200:
-        fail(
-            f"SEC ticker map request failed with HTTP {response.status_code}. "
-            f"A 403 here almost always means the User-Agent was rejected."
-        )
-
-    # The payload is a dict keyed by row number: {"0": {cik_str, ticker, title}, ...}
-    ticker_map = response.json()
-
-    for entry in ticker_map.values():
-        if entry.get("ticker", "").upper() == ticker.upper():
-            # CIKs arrive as ints; the API path needs them padded to 10 digits.
-            padded_cik = str(entry["cik_str"]).zfill(10)
-            return padded_cik, entry.get("title", "<unknown>")
-
-    fail(f"Ticker {ticker} not found in the SEC ticker->CIK map ({len(ticker_map)} entries).")
-
-
 def pull_sec_eps() -> pd.DataFrame:
     section(f"[3/4] SEC EDGAR XBRL -- EarningsPerShareDiluted for {TICKER}")
 
-    cik, company_name = lookup_cik(TICKER)
+    # CIK resolution, throttling, headers and fact shaping all come from the
+    # loader; this script only reports on what comes back.
+    cik_map = load_ticker_cik_map()
+    cik, company_name, was_overridden = resolve_cik(TICKER, cik_map)
+
     print(f"resolved CIK   : {cik}  ({company_name})")
+    if was_overridden:
+        print("               (CIK override applied -- see CIK_OVERRIDES in the loader)")
 
-    url = SEC_CONCEPT_URL.format(cik=cik)
-    print(f"endpoint       : {url}")
+    facts = fetch_quarterly_eps(TICKER, cik)
 
-    response = requests.get(url, headers=sec_headers(), timeout=SEC_TIMEOUT_SECONDS)
-
-    if response.status_code == 403:
-        fail("EDGAR returned 403 Forbidden -- the User-Agent header was rejected.")
-    if response.status_code == 404:
-        fail(
-            f"EDGAR returned 404 for CIK {cik}. This company does not report the "
-            f"us-gaap:EarningsPerShareDiluted concept under that CIK."
-        )
-    if response.status_code != 200:
-        fail(f"EDGAR request failed with HTTP {response.status_code}.")
-
-    payload = response.json()
-
-    # Facts are grouped by unit of measure; EPS is reported in USD per share.
-    units = payload.get("units", {})
-    if not units:
-        fail(f"EDGAR response for CIK {cik} contained no 'units' block.")
-
-    unit_key = "USD/shares" if "USD/shares" in units else sorted(units)[0]
-    if unit_key != "USD/shares":
-        print(f"NOTE: expected unit 'USD/shares', using '{unit_key}' instead.")
-
-    raw_records = units[unit_key]
-    if not raw_records:
-        fail(f"EDGAR returned an empty record list under unit '{unit_key}'.")
-
-    facts = pd.DataFrame(raw_records)
-    print(f"\nraw records    : {len(facts)}  (all durations, all filings)")
+    print(f"\nraw records    : {facts.attrs['raw_record_count']}  (all durations, all filings)")
+    print(f"unit           : {facts.attrs['unit_key']}")
     print(f"record keys    : {list(facts.columns)}")
 
     # --- required-field check ---------------------------------------------
@@ -269,11 +196,8 @@ def pull_sec_eps() -> pd.DataFrame:
         if required_field not in facts.columns:
             fail(f"EDGAR records are missing the '{required_field}' field entirely.")
 
-    end_dates = pd.to_datetime(facts["end"], errors="coerce")
-    filed_dates = pd.to_datetime(facts["filed"], errors="coerce")
-
-    missing_end_count = int(end_dates.isna().sum())
-    missing_filed_count = int(filed_dates.isna().sum())
+    missing_end_count = facts.attrs["missing_end"]
+    missing_filed_count = facts.attrs["missing_filed"]
 
     print(f"missing 'end'  : {missing_end_count}")
     print(f"missing 'filed': {missing_filed_count}")
@@ -284,26 +208,11 @@ def pull_sec_eps() -> pd.DataFrame:
         )
     print("OK: every record carries BOTH an 'end' date and a 'filed' date.")
 
-    # --- isolate quarterly durations ---------------------------------------
-    # Records with no 'start' are instantaneous facts; duration facts of ~1 year are
-    # annual EPS. Only ~quarter-length durations are quarterly EPS.
-    if "start" not in facts.columns:
-        fail("EDGAR records have no 'start' field, so quarterly facts cannot be identified.")
-
-    start_dates = pd.to_datetime(facts["start"], errors="coerce")
-    duration_days = (end_dates - start_dates).dt.days
-    is_quarterly = duration_days.between(QUARTER_MIN_DAYS, QUARTER_MAX_DAYS)
-
-    quarterly = facts.loc[is_quarterly].copy()
-    if quarterly.empty:
-        fail(
-            f"No records had a {QUARTER_MIN_DAYS}-{QUARTER_MAX_DAYS} day duration, "
-            f"so no quarterly EPS facts were found."
-        )
-
-    # Attach parsed dates so downstream printing does not re-parse strings.
-    quarterly["period_end"] = end_dates.loc[is_quarterly]
-    quarterly["filed_date"] = filed_dates.loc[is_quarterly]
+    # The loader already restricted to quarterly durations; annual and
+    # instantaneous facts never reach this point.
+    quarterly = facts.copy()
+    quarterly["period_end"] = quarterly["period_end"]
+    quarterly["filed_date"] = quarterly["filed_date"]
 
     # fy/fp label the FILING that carried the fact, not the period the fact covers.
     # A 10-Q filed in FY2025 restates the year-ago quarter, so period end 2024-06-29

@@ -17,31 +17,30 @@ from __future__ import annotations
 
 import os
 import sys
-import time
 
 import pandas as pd
-import requests
+
+# src/ is a sibling of scripts/, so make the repo root importable.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+
+# All EDGAR access -- headers, throttle, CIK overrides, fact shaping -- lives in
+# src/data_loader.py. Nothing in this script talks to EDGAR directly.
+from src.data_loader import (  # noqa: E402
+    CIK_OVERRIDES,
+    QUARTER_MAX_DAYS,
+    QUARTER_MIN_DAYS,
+    SEC_SLEEP_SECONDS,
+    fail,
+    fetch_quarterly_eps,
+    load_ticker_cik_map,
+    resolve_cik,
+)
 
 # --------------------------------------------------------------------------
 # Configuration -- edit these, nothing below.
 # --------------------------------------------------------------------------
 
 TICKERS = ["AAPL", "MSFT", "JNJ", "JPM", "XOM", "PG", "WMT", "CAT", "NEE", "T"]
-
-# SEC's ticker->CIK map points at the CURRENT registrant for a ticker. When a
-# company reorganizes, the ticker is repointed to the new holding-company CIK,
-# which carries only post-reorganization filings -- decades of history sit under
-# the old CIK and are silently invisible. Verified: the map sends XOM to CIK
-# 2115436 ("ExxonMobil Holdings Corp", 4 EPS records from 2025-06-30), while CIK
-# 34088 ("Exxon Mobil Corporation") holds 224 records back to 2007-12-31.
-CIK_OVERRIDES = {
-    "XOM": "0000034088",  # historical Exxon Mobil Corporation filer
-}
-
-# SEC EDGAR blocks requests that do not identify a real contact.
-# REPLACE THIS with your own address or the script will refuse to call EDGAR.
-SEC_CONTACT_EMAIL = "REPLACE_ME@example.com"
-SEC_APP_NAME = "earnings-surprise-research"
 
 # XBRL tagging was phased in over 2009-2011. Before it settled, a quarter's
 # EARLIEST XBRL record is frequently a later comparative rather than its own
@@ -64,16 +63,12 @@ YEAR_AGO_TARGET_DAYS = 365
 YEAR_AGO_TOLERANCE_DAYS = 45
 
 # Label balance outside this band means the baseline is lopsided enough to matter.
+# Upper bound raised to 0.65 because the split-adjusted label sits near 61%:
+# correcting the pre-split year-ago values turns false negatives into positives,
+# so the naive "always predict 1" baseline is now ~61% accurate. Judge any model
+# against that number, not against 50%.
 BALANCE_WARN_LOW = 0.40
-BALANCE_WARN_HIGH = 0.60
-
-# EDGAR's fair-access limit is 10 requests/second; one per 0.5s is 2/s.
-SEC_SLEEP_SECONDS = 0.5
-
-# A quarterly XBRL fact covers a ~3 month duration. Fiscal quarters are ragged
-# (13 weeks, 4-4-5 calendars, 52/53-week years), so accept a generous window.
-QUARTER_MIN_DAYS = 60
-QUARTER_MAX_DAYS = 110
+BALANCE_WARN_HIGH = 0.65
 
 # A split is detected when a later filing restates a period's EPS by almost
 # exactly an integer factor. Real restatements do not land on 4.000; splits do.
@@ -84,23 +79,9 @@ PANEL_PARQUET = "data/eps_panel.parquet"
 DROPPED_CSV = "data/dropped_periods.csv"
 SPLIT_CSV = "data/split_contaminated_periods.csv"
 
-SEC_TICKER_MAP_URL = "https://www.sec.gov/files/company_tickers.json"
-SEC_CONCEPT_URL = (
-    "https://data.sec.gov/api/xbrl/companyconcept/"
-    "CIK{cik}/us-gaap/EarningsPerShareDiluted.json"
-)
-SEC_TIMEOUT_SECONDS = 30
-
-
 # --------------------------------------------------------------------------
 # Small helpers
 # --------------------------------------------------------------------------
-
-
-def fail(message: str) -> None:
-    """Abort loudly with a non-zero exit. All hard failures funnel through here."""
-    print(f"\n*** FATAL: {message}", file=sys.stderr)
-    sys.exit(1)
 
 
 def section(title: str) -> None:
@@ -109,100 +90,9 @@ def section(title: str) -> None:
     print("=" * 78)
 
 
-def sec_headers() -> dict:
-    """Headers EDGAR requires. A missing/blank User-Agent gets a 403."""
-    if "REPLACE_ME" in SEC_CONTACT_EMAIL:
-        fail(
-            "SEC_CONTACT_EMAIL is still the placeholder. EDGAR requires a real "
-            "contact address in the User-Agent header; edit the constant at the "
-            "top of this script before running."
-        )
-    return {
-        "User-Agent": f"{SEC_APP_NAME} ({SEC_CONTACT_EMAIL})",
-        "Accept-Encoding": "gzip, deflate",
-        "Accept": "application/json",
-    }
-
-
-def sec_get(url: str) -> requests.Response:
-    """Single throttled EDGAR GET. Every outbound call goes through here so the
-    rate limit cannot be bypassed by adding a call site later."""
-    time.sleep(SEC_SLEEP_SECONDS)  # sleep BEFORE, so bursts cannot slip through
-    return requests.get(url, headers=sec_headers(), timeout=SEC_TIMEOUT_SECONDS)
-
-
 # --------------------------------------------------------------------------
 # Stage 1 -- fetch raw quarterly facts
 # --------------------------------------------------------------------------
-
-
-def load_ticker_cik_map() -> dict:
-    """Fetch SEC's ticker->CIK map once and index it by upper-case ticker."""
-    response = sec_get(SEC_TICKER_MAP_URL)
-    if response.status_code != 200:
-        fail(
-            f"SEC ticker map request failed with HTTP {response.status_code}. "
-            f"A 403 here almost always means the User-Agent was rejected."
-        )
-
-    raw_map = response.json()
-    if not raw_map:
-        fail("SEC ticker map came back empty.")
-
-    indexed = {}
-    for entry in raw_map.values():
-        symbol = entry.get("ticker", "").upper()
-        # CIKs arrive as ints; the API path needs them padded to 10 digits.
-        indexed[symbol] = str(entry["cik_str"]).zfill(10)
-
-    return indexed
-
-
-def fetch_quarterly_facts(ticker: str, cik: str) -> pd.DataFrame:
-    """Return every quarterly-duration diluted-EPS fact for one CIK, undeduped."""
-    response = sec_get(SEC_CONCEPT_URL.format(cik=cik))
-
-    if response.status_code == 403:
-        fail("EDGAR returned 403 Forbidden -- the User-Agent header was rejected.")
-    if response.status_code == 404:
-        fail(f"EDGAR returned 404 for {ticker} (CIK {cik}); concept not reported.")
-    if response.status_code != 200:
-        fail(f"EDGAR request for {ticker} failed with HTTP {response.status_code}.")
-
-    units = response.json().get("units", {})
-    if not units:
-        fail(f"EDGAR response for {ticker} (CIK {cik}) contained no 'units' block.")
-
-    unit_key = "USD/shares" if "USD/shares" in units else sorted(units)[0]
-    raw_records = units[unit_key]
-    if not raw_records:
-        fail(f"EDGAR returned an empty record list for {ticker} under '{unit_key}'.")
-
-    facts = pd.DataFrame(raw_records)
-    for required_field in ("start", "end", "filed", "val"):
-        if required_field not in facts.columns:
-            fail(f"{ticker}: EDGAR records lack the '{required_field}' field entirely.")
-
-    end_dates = pd.to_datetime(facts["end"], errors="coerce")
-    start_dates = pd.to_datetime(facts["start"], errors="coerce")
-
-    # Records with no 'start' are instantaneous facts; ~365 day durations are
-    # annual EPS. Only ~quarter-length durations are quarterly EPS.
-    duration_days = (end_dates - start_dates).dt.days
-    is_quarterly = duration_days.between(QUARTER_MIN_DAYS, QUARTER_MAX_DAYS)
-
-    quarterly = facts.loc[is_quarterly].copy()
-    if quarterly.empty:
-        fail(f"{ticker}: no quarterly-duration EPS facts found.")
-
-    quarterly["ticker"] = ticker
-    quarterly["cik"] = cik
-    quarterly["period_end"] = end_dates.loc[is_quarterly]
-    quarterly["filed_date"] = pd.to_datetime(quarterly["filed"], errors="coerce")
-    quarterly["eps_diluted"] = quarterly["val"]
-    quarterly["filing_lag_days"] = (quarterly["filed_date"] - quarterly["period_end"]).dt.days
-
-    return quarterly
 
 
 # --------------------------------------------------------------------------
@@ -290,25 +180,28 @@ def write_dropped_log(dropped_log: pd.DataFrame) -> None:
 
 
 # --------------------------------------------------------------------------
-# Stage 4 -- year-over-year label
+# Stage 4 -- year-ago match
 # --------------------------------------------------------------------------
 
 
-def attach_yoy_label(panel: pd.DataFrame) -> pd.DataFrame:
-    """Label 1 when EPS beat the same quarter a year earlier, else 0.
+def attach_year_ago(panel: pd.DataFrame) -> pd.DataFrame:
+    """Attach each row's year-ago quarter. No label is computed here.
 
     The year-ago row is located by DATE PROXIMITY, never by row offset: a missing
-    quarter would make a positional shift compare against the wrong period.
+    quarter would make a positional shift compare against the wrong period. Its
+    filed_date comes along too, because the split logic in stage 5 needs to know
+    the window between the two observations' prediction dates.
     """
-    # The date each row is looking for: roughly one year before its period end.
     panel = panel.copy()
     panel["year_ago_target"] = panel["period_end"] - pd.Timedelta(days=YEAR_AGO_TARGET_DAYS)
 
-    # Right-hand side is the same panel, offering its period_end and EPS as the
-    # candidate year-ago observation.
-    candidates = panel[["ticker", "period_end", "eps_diluted"]].copy()
+    candidates = panel[["ticker", "period_end", "filed_date", "eps_diluted"]].copy()
     candidates = candidates.rename(
-        columns={"period_end": "period_end_year_ago", "eps_diluted": "eps_year_ago"}
+        columns={
+            "period_end": "period_end_year_ago",
+            "filed_date": "filed_date_year_ago",
+            "eps_diluted": "eps_year_ago",
+        }
     )
 
     # merge_asof needs both sides sorted on the join key.
@@ -317,7 +210,7 @@ def attach_yoy_label(panel: pd.DataFrame) -> pd.DataFrame:
 
     # direction="nearest" with a tolerance implements "~365 days prior, +/- 45".
     # by="ticker" keeps each company's history separate. A row whose nearest
-    # candidate falls outside the tolerance gets NaN, which becomes a null label.
+    # candidate falls outside the tolerance gets NaN and ends up unlabelled.
     matched = pd.merge_asof(
         left_sorted,
         right_sorted,
@@ -328,46 +221,48 @@ def attach_yoy_label(panel: pd.DataFrame) -> pd.DataFrame:
         tolerance=pd.Timedelta(days=YEAR_AGO_TOLERANCE_DAYS),
     )
 
-    # Strictly greater: a flat quarter is not a beat.
-    beat_year_ago = matched["eps_diluted"] > matched["eps_year_ago"]
-
-    # Where no year-ago row matched, the comparison is meaningless -> null, not 0.
-    has_match = matched["eps_year_ago"].notna()
-    matched["label_yoy"] = beat_year_ago.astype("Int64").where(has_match)
-
     return matched
 
 
 # --------------------------------------------------------------------------
-# Stage 5 -- stock-split contamination check
+# Stage 5 -- split detection and adjustment
 # --------------------------------------------------------------------------
 
 
 def detect_split_events(all_facts: pd.DataFrame) -> list:
-    """Find stock splits using EDGAR's own restatement evidence.
+    """Find stock splits, and bound each one's effective date, from EDGAR alone.
 
     When a company splits its stock, later filings repeat earlier quarters with
-    the EPS divided by the split factor. So a period whose original value and a
-    later restated value differ by almost exactly an integer factor is a split.
-    This needs no external split calendar and no hardcoded dates.
+    the EPS divided by the split factor. A period whose original value and a
+    later restated value differ by almost exactly an integer factor is therefore
+    a split. Real restatements do not land on 4.000; splits do.
 
-    Returns (ticker, factor, last_pre_split_period_end) tuples, where the last
-    element is the newest period still ORIGINALLY reported in pre-split units.
+    The effective date is never stated in the data, but it IS bounded. A filing
+    made on date D reports in the share units current on D, so:
+
+        window_start = latest filing date still reporting PRE-split units
+        window_end   = earliest filing date already reporting POST-split units
+
+    and the true effective date lies in (window_start, window_end]. Callers must
+    treat that as an interval, not a point -- see apply_split_adjustment.
+
+    Returns dicts with ticker, factor, window_start, window_end, n_evidence.
     """
-    events = []
-
     # Near-zero EPS makes the ratio meaningless, so exclude it before dividing.
     usable = all_facts[all_facts["eps_diluted"].abs() > 0.01]
 
-    for (ticker, period_end), group in usable.groupby(["ticker", "period_end"]):
+    # (ticker, factor) -> {"pre": [filed dates], "post": [filed dates]}
+    evidence = {}
+
+    for (ticker, _period_end), group in usable.groupby(["ticker", "period_end"]):
         ordered = group.sort_values("filed_date")
-        original_value = ordered.iloc[0]["eps_diluted"]
+        original = ordered.iloc[0]
 
         for _, later in ordered.iloc[1:].iterrows():
-            if abs(later["eps_diluted"] - original_value) <= 1e-9:
+            if abs(later["eps_diluted"] - original["eps_diluted"]) <= 1e-9:
                 continue  # same number repeated, not a restatement
 
-            ratio = original_value / later["eps_diluted"]
+            ratio = original["eps_diluted"] / later["eps_diluted"]
             nearest_factor = round(ratio)
 
             # Only an (almost exactly) integer shrink counts as a split.
@@ -376,78 +271,186 @@ def detect_split_events(all_facts: pd.DataFrame) -> list:
             if abs(ratio - nearest_factor) / nearest_factor > SPLIT_RATIO_TOLERANCE:
                 continue
 
-            events.append((ticker, int(nearest_factor), period_end))
+            key = (ticker, int(nearest_factor))
+            bucket = evidence.setdefault(key, {"pre": [], "post": []})
+            bucket["pre"].append(original["filed_date"])
+            bucket["post"].append(later["filed_date"])
 
-    # Collapse to one boundary per (ticker, factor): the LATEST period still
-    # originally reported pre-split marks where the unit change takes effect.
-    boundaries = {}
-    for ticker, factor, period_end in events:
-        key = (ticker, factor)
-        if key not in boundaries or period_end > boundaries[key]:
-            boundaries[key] = period_end
+    events = []
+    for (ticker, factor), dates in evidence.items():
+        window_start = max(dates["pre"])
+        window_end = min(dates["post"])
 
-    return [(ticker, factor, boundary) for (ticker, factor), boundary in boundaries.items()]
+        # If the bounds cross, the evidence is self-contradictory and the
+        # effective date cannot be established. Recorded so callers can refuse
+        # to adjust rather than guess.
+        established = window_start < window_end
+
+        events.append(
+            {
+                "ticker": ticker,
+                "factor": factor,
+                "window_start": window_start,
+                "window_end": window_end,
+                "established": established,
+                "n_evidence": len(dates["pre"]),
+            }
+        )
+
+    return sorted(events, key=lambda event: (event["ticker"], event["factor"]))
 
 
-def flag_split_contamination(panel: pd.DataFrame, split_events: list) -> pd.DataFrame:
-    """Mark rows whose year-ago EPS is quoted in pre-split shares.
+def apply_split_adjustment(panel: pd.DataFrame, split_events: list) -> pd.DataFrame:
+    """Adjust the YEAR-AGO EPS for any split falling between the two observations.
 
-    The panel keeps MIN(filed), which is point-in-time correct but means a row
-    straddling a split compares post-split EPS against a PRE-split year-ago value
-    -- different units. The label is left exactly as specified; these rows are
-    flagged, logged, and warned about so the distortion is visible.
+    The current quarter's eps_diluted is never touched: it stays exactly as
+    MIN(filed) reported it. Only the year-ago value is restated into the current
+    quarter's share units, because that is the side quoted in stale units.
+
+    A split counts only if its effective date falls between the two moments this
+    row's two EPS numbers became public -- i.e. inside
+        (prediction_date_year_ago, prediction_date]
+    Since the effective date is only bounded to a window, that is decided per
+    filing rather than by comparing whole intervals (see the comment below):
+
+        year-ago in old units AND current in new units -> adjust
+        both on the same side of the window            -> leave alone
+        either filing lands inside the window          -> NULL the label
+
+    The third case is why this returns a flag as well as a factor: guessing
+    either way would silently produce a wrong label.
     """
     panel = panel.copy()
-    panel["split_contaminated"] = False
+    panel["split_factor_applied"] = 1
+    panel["split_ambiguous"] = False
 
-    contaminated_frames = []
+    # Rows with no year-ago match are already unlabelled; excluded so their NaT
+    # comparisons cannot be mistaken for ambiguity.
+    has_match = panel["period_end_year_ago"].notna()
 
-    for ticker, factor, boundary in split_events:
-        # Contaminated: this period is post-split, its year-ago period is not.
-        is_ticker = panel["ticker"] == ticker
-        after_split = panel["period_end"] > boundary
-        year_ago_before_split = panel["period_end_year_ago"] <= boundary
+    for event in split_events:
+        is_ticker = panel["ticker"] == event["ticker"]
 
-        affected = is_ticker & after_split & year_ago_before_split
-        panel.loc[affected, "split_contaminated"] = True
-
-        if not affected.any():
+        if not event["established"]:
+            # Cannot bound the date at all -- refuse to adjust any row of this
+            # ticker whose comparison could span it.
+            panel.loc[is_ticker & has_match, "split_ambiguous"] = True
             continue
 
-        detail = panel.loc[affected].copy()
-        detail["split_factor"] = factor
-        detail["split_boundary_period"] = boundary
-        # What the label WOULD be if the year-ago value were put in current units.
-        detail["eps_year_ago_adjusted"] = detail["eps_year_ago"] / factor
-        detail["label_if_split_adjusted"] = (
-            detail["eps_diluted"] > detail["eps_year_ago_adjusted"]
-        ).astype(int)
-        contaminated_frames.append(detail)
+        window_start = event["window_start"]
+        window_end = event["window_end"]
 
-    if not contaminated_frames:
-        print("no split-contaminated periods detected.")
-        return panel
+        # The interval test is applied per FILING rather than to the interval as
+        # a whole. A split falls between two observations exactly when the earlier
+        # one was published in old share units and the later one in new units, and
+        # each filing's side is decidable on its own:
+        #
+        #     filed on/before window_start -> definitely OLD units
+        #     filed on/after  window_end   -> definitely NEW units
+        #     filed inside the window      -> undecidable
+        #
+        # Asking it this way uses the same evidence as comparing the window to
+        # (prediction_date_year_ago, prediction_date], but stays decisive at the
+        # boundaries: window_start IS the last pre-split filing date, so a
+        # year-ago row filed exactly then is known to be in old units, where the
+        # whole-interval comparison would call it ambiguous and discard the row.
+        year_ago_filed = panel["filed_date_year_ago"]
+        current_filed = panel["filed_date"]
 
-    contaminated = pd.concat(contaminated_frames, ignore_index=True)
-    would_flip = contaminated["label_if_split_adjusted"] != contaminated["label_yoy"].astype(int)
+        year_ago_old_units = year_ago_filed <= window_start
+        year_ago_new_units = year_ago_filed >= window_end
+        current_old_units = current_filed <= window_start
+        current_new_units = current_filed >= window_end
 
-    log_columns = [
-        "ticker", "period_end", "eps_diluted", "period_end_year_ago", "eps_year_ago",
-        "split_factor", "eps_year_ago_adjusted", "label_yoy", "label_if_split_adjusted",
-    ]
-    log = contaminated[log_columns].sort_values(["ticker", "period_end"])
-    log.to_csv(SPLIT_CSV, index=False)
+        # Split sits strictly between the two publications -> adjust.
+        intervenes = year_ago_old_units & current_new_units
 
-    print(f"\n!!! WARNING: {len(contaminated)} rows compare against a PRE-SPLIT year-ago EPS.")
-    print(f"!!! Splits detected from EDGAR restatements: "
-          f"{', '.join(f'{t} {f}:1' for t, f, _ in sorted(split_events))}")
-    print(f"!!! {int(would_flip.sum())} of those labels are WRONG as a result "
-          f"(the year-ago value is in different share units).")
-    print(f"!!! label_yoy is left as specified; rows are flagged in the "
-          f"'split_contaminated' column.")
-    print(f"!!! Full detail -> {SPLIT_CSV}")
+        # Both readings on the same side -> same units, nothing to do.
+        same_units = (year_ago_old_units & current_old_units) | (
+            year_ago_new_units & current_new_units
+        )
+
+        applies = is_ticker & has_match & intervenes
+        unclear = is_ticker & has_match & ~intervenes & ~same_units
+
+        # Multiplied, not assigned: two splits between the same pair compound.
+        panel.loc[applies, "split_factor_applied"] *= event["factor"]
+        panel.loc[unclear, "split_ambiguous"] = True
+
+    # The year-ago value restated into current share units.
+    panel["eps_year_ago_adjusted"] = panel["eps_year_ago"] / panel["split_factor_applied"]
+
+    # Kept so the unadjusted label can always be reproduced: eps_year_ago is
+    # still the raw as-filed value, and this marks every row a split touched.
+    panel["split_contaminated"] = (panel["split_factor_applied"] > 1) | panel["split_ambiguous"]
 
     return panel
+
+
+def attach_label(panel: pd.DataFrame) -> pd.DataFrame:
+    """label_yoy = 1 when EPS beat the SPLIT-ADJUSTED year-ago quarter, else 0."""
+    panel = panel.copy()
+
+    # Strictly greater: a flat quarter is not a beat.
+    beat_year_ago = panel["eps_diluted"] > panel["eps_year_ago_adjusted"]
+
+    # Null where there is no year-ago row at all, and null where a split's
+    # effective date could not be pinned to one side of the interval.
+    usable = panel["eps_year_ago_adjusted"].notna() & ~panel["split_ambiguous"]
+    panel["label_yoy"] = beat_year_ago.astype("Int64").where(usable)
+
+    return panel
+
+
+def report_split_events(panel: pd.DataFrame, split_events: list) -> None:
+    """Print what was detected and what it changed."""
+    if not split_events:
+        print("no stock splits detected in the raw filings.")
+        return
+
+    print("splits detected from EDGAR restatement evidence:")
+    for event in split_events:
+        status = "bounded" if event["established"] else "UNBOUNDED"
+        print(
+            f"    {event['ticker']:5s} {event['factor']}:1  effective date in "
+            f"({event['window_start'].date()}, {event['window_end'].date()}]  "
+            f"{status}, {event['n_evidence']} evidence records"
+        )
+
+    adjusted = panel[panel["split_factor_applied"] > 1]
+    ambiguous = panel[panel["split_ambiguous"]]
+
+    print(f"\nrows with year-ago EPS adjusted : {len(adjusted)}")
+    print(f"rows nulled as unresolvable     : {len(ambiguous)}")
+
+    if not adjusted.empty:
+        detail = pd.DataFrame(
+            {
+                "ticker": adjusted["ticker"],
+                "period_end": adjusted["period_end"].dt.date,
+                "eps": adjusted["eps_diluted"],
+                "eps_yr_ago_raw": adjusted["eps_year_ago"],
+                "factor": adjusted["split_factor_applied"],
+                "eps_yr_ago_adj": adjusted["eps_year_ago_adjusted"].round(4),
+                "label": adjusted["label_yoy"],
+            }
+        )
+        print("\nadjusted rows:")
+        print(detail.to_string(index=False))
+
+    if not ambiguous.empty:
+        print("\nnulled rows (split effective date not resolvable to one side):")
+        unresolved = ambiguous[["ticker", "period_end", "eps_diluted", "eps_year_ago"]]
+        print(unresolved.to_string(index=False))
+
+    # Persist the full picture so the unadjusted label can be rebuilt offline.
+    touched = panel[panel["split_contaminated"]]
+    log_columns = [
+        "ticker", "period_end", "eps_diluted", "period_end_year_ago", "eps_year_ago",
+        "split_factor_applied", "eps_year_ago_adjusted", "split_ambiguous", "label_yoy",
+    ]
+    touched[log_columns].to_csv(SPLIT_CSV, index=False)
+    print(f"\nsplit-touched rows -> {SPLIT_CSV}  ({len(touched)} rows)")
 
 
 # --------------------------------------------------------------------------
@@ -499,7 +502,14 @@ def report_label_balance(panel: pd.DataFrame) -> None:
 
     print(f"rows in panel        : {len(panel)}")
     print(f"rows with a label    : {len(labelled)}")
-    print(f"rows with NULL label : {null_count}  (no year-ago match within tolerance)")
+    # Two distinct causes, worth separating: a missing year-ago quarter is a
+    # coverage gap, an unresolvable split is a knowledge gap.
+    no_match_count = int(panel["eps_year_ago"].isna().sum())
+    ambiguous_count = int(panel["split_ambiguous"].sum())
+    print(
+        f"rows with NULL label : {null_count}  "
+        f"({no_match_count} no year-ago match, {ambiguous_count} unresolvable split)"
+    )
 
     print("\nper ticker:")
     print(f"    {'ticker':7s} {'n':>5s} {'pos':>5s} {'rate':>7s}  {'null':>5s}")
@@ -529,13 +539,23 @@ def report_label_balance(panel: pd.DataFrame) -> None:
     print(f"\noverall positive rate: {overall_rate:.1%}  ({overall_positive}/{len(labelled)})")
 
     # A lopsided baseline is not an error, but it decides what "good" means later.
-    # If split contamination is present, report what the balance would be without
-    # it -- the raw rate can sit inside the band only because of the distortion.
-    if "split_contaminated" in panel.columns and panel["split_contaminated"].any():
-        contaminated_count = int(panel["split_contaminated"].sum())
+    # Say plainly how much of the balance rests on the split adjustment, and how
+    # the unadjusted label would have scored, so the two are always comparable.
+    if "split_factor_applied" in panel.columns:
+        adjusted_count = int((panel["split_factor_applied"] > 1).sum())
+        ambiguous_count = int(panel["split_ambiguous"].sum())
+
+        unadjusted_beat = panel["eps_diluted"] > panel["eps_year_ago"]
+        unadjusted = unadjusted_beat.astype("Int64").where(panel["eps_year_ago"].notna())
+        unadjusted_rate = unadjusted.dropna().mean()
+
         print(
-            f"\nnote: {contaminated_count} rows are split-contaminated (see SPLIT CHECK "
-            f"above);\n      the rate above includes their distorted labels."
+            f"\nsplit adjustment: {adjusted_count} rows had their year-ago EPS "
+            f"restated, {ambiguous_count} nulled as unresolvable."
+        )
+        print(
+            f"unadjusted label would have scored {unadjusted_rate:.1%} positive "
+            f"(kept reproducible via eps_year_ago)."
         )
 
     if not (BALANCE_WARN_LOW <= overall_rate <= BALANCE_WARN_HIGH):
@@ -564,14 +584,10 @@ def main() -> None:
 
     ticker_frames = []
     for ticker in TICKERS:
-        if ticker.upper() not in cik_map:
-            fail(f"Ticker {ticker} not found in the SEC ticker->CIK map.")
+        cik, _company, was_overridden = resolve_cik(ticker, cik_map)
+        note = "  (CIK override)" if was_overridden else ""
 
-        # An override wins over the map; see CIK_OVERRIDES for why this exists.
-        cik = CIK_OVERRIDES.get(ticker.upper(), cik_map[ticker.upper()])
-        note = "  (CIK override)" if ticker.upper() in CIK_OVERRIDES else ""
-
-        facts = fetch_quarterly_facts(ticker, cik)
+        facts = fetch_quarterly_eps(ticker, cik)
         print(f"    {ticker:5s} CIK {cik}  {len(facts):4d} quarterly facts{note}")
         ticker_frames.append(facts)
 
@@ -595,17 +611,35 @@ def main() -> None:
     # Computed BEFORE the study-window trim so a surviving 2010 quarter can serve
     # as the year-ago lookup for an in-window 2011 quarter. Those warm-up rows are
     # used only as lookups; they never reach the output.
-    section("LABEL")
-    labelled = attach_yoy_label(after_lag)
+    section("YEAR-AGO MATCH")
 
-    in_window = labelled["period_end"] >= STUDY_START
-    panel = labelled.loc[in_window].copy()
+    # Matched BEFORE the study-window trim so a surviving 2010 quarter can serve
+    # as the year-ago lookup for an in-window 2011 quarter. Those warm-up rows are
+    # used only as lookups; they never reach the output.
+    matched = attach_year_ago(after_lag)
+
+    in_window = matched["period_end"] >= STUDY_START
+    panel = matched.loc[in_window].copy()
     print(f"study window {STUDY_START.date()} onward : {len(panel)} rows "
-          f"({len(labelled) - len(panel)} warm-up rows used for lookup only)")
+          f"({len(matched) - len(panel)} warm-up rows used for lookup only)")
+
+    # Prediction dates for both observations must exist before the split logic,
+    # which decides whether a split falls between them.
+    panel["prediction_date"] = panel["filed_date"] + pd.Timedelta(days=1)
+    panel["prediction_date_year_ago"] = panel["filed_date_year_ago"] + pd.Timedelta(days=1)
+
+    # ---- split adjustment -------------------------------------------------
+    # Takes the RAW facts: split evidence lives in the restatements dedupe removed.
+    section("SPLIT ADJUSTMENT")
+    split_events = detect_split_events(all_facts)
+    panel = apply_split_adjustment(panel, split_events)
+
+    # ---- label ------------------------------------------------------------
+    # Computed only after the adjustment, so it compares like with like.
+    panel = attach_label(panel)
+    report_split_events(panel, split_events)
 
     # ---- assemble ---------------------------------------------------------
-    panel["prediction_date"] = panel["filed_date"] + pd.Timedelta(days=1)
-
     output_columns = [
         "ticker",
         "cik",
@@ -615,20 +649,20 @@ def main() -> None:
         "eps_diluted",
         "n_filings_seen",
         "label_yoy",
-        # Label provenance, kept so the +/-45 day match can be audited. These are
-        # NOT features -- they describe how label_yoy was derived.
+        # Label provenance, kept so the +/-45 day match and the split adjustment
+        # can both be audited, and so the UNADJUSTED label can be rebuilt from
+        # eps_diluted vs eps_year_ago. These are NOT features -- they describe
+        # how label_yoy was derived.
         "period_end_year_ago",
+        "prediction_date_year_ago",
         "eps_year_ago",
+        "split_factor_applied",
+        "eps_year_ago_adjusted",
+        "split_ambiguous",
+        "split_contaminated",
     ]
     panel = panel[output_columns].sort_values(["ticker", "period_end"])
     panel = panel.reset_index(drop=True)
-
-    # ---- split contamination ---------------------------------------------
-    # Runs on the assembled panel because it needs period_end_year_ago, but takes
-    # the RAW facts since split evidence lives in the restatements we deduped away.
-    section("SPLIT CHECK")
-    split_events = detect_split_events(all_facts)
-    panel = flag_split_contamination(panel, split_events)
 
     verify_panel(panel)
     report_label_balance(panel)

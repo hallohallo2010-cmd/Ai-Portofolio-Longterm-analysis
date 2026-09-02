@@ -14,43 +14,33 @@ Run:  python scripts/explore_ten_tickers.py
 
 from __future__ import annotations
 
+import os
 import sys
-import time
 from collections import defaultdict
 
 import pandas as pd
-import requests
+
+# src/ is a sibling of scripts/, so make the repo root importable.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+
+# All EDGAR access -- headers, throttle, CIK overrides, fact shaping, and the
+# thin-coverage guard -- lives in src/data_loader.py.
+from src.data_loader import (  # noqa: E402
+    QUARTER_MAX_DAYS,
+    QUARTER_MIN_DAYS,
+    SEC_SLEEP_SECONDS,
+    fail,
+    fetch_quarterly_eps,
+    find_thin_coverage,
+    load_ticker_cik_map,
+    resolve_cik,
+)
 
 # --------------------------------------------------------------------------
 # Configuration -- edit these, nothing below.
 # --------------------------------------------------------------------------
 
 TICKERS = ["AAPL", "MSFT", "JNJ", "JPM", "XOM", "PG", "WMT", "CAT", "NEE", "T"]
-
-# SEC's ticker->CIK map points at the CURRENT registrant for a ticker. When a
-# company reorganizes, the ticker is repointed to the new holding-company CIK,
-# which carries only post-reorganization filings -- the decades of history sit
-# under the old CIK and are silently invisible. Verified example: as of this
-# writing the map sends XOM to CIK 2115436 ("ExxonMobil Holdings Corp", 4 EPS
-# records from 2025-06-30), while CIK 34088 ("Exxon Mobil Corporation") holds
-# 224 records back to 2007-12-31. Override such tickers here.
-CIK_OVERRIDES = {
-    "XOM": "0000034088",  # historical Exxon Mobil Corporation filer
-}
-
-# SEC EDGAR blocks requests that do not identify a real contact.
-# REPLACE THIS with your own address or the script will refuse to call EDGAR.
-SEC_CONTACT_EMAIL = "REPLACE_ME@example.com"
-SEC_APP_NAME = "earnings-surprise-research"
-
-# EDGAR's fair-access limit is 10 requests/second. One request per 0.5s is 2/s,
-# comfortably under, and this script makes only ~11 calls in total.
-SEC_SLEEP_SECONDS = 0.5
-
-# A quarterly XBRL fact covers a ~3 month duration. Fiscal quarters are ragged
-# (13 weeks, 4-4-5 calendars, 52/53-week years), so accept a generous window.
-QUARTER_MIN_DAYS = 60
-QUARTER_MAX_DAYS = 110
 
 # Two lag populations are expected: the original filing (~30-45 days after period
 # end) and the same quarter restated as a comparative in a later filing (~1 year).
@@ -68,30 +58,12 @@ EPS_EQUALITY_TOLERANCE = 1e-9
 # the number was public on time, just not tagged. Used only to split the Q2 report.
 XBRL_ADOPTION_SETTLED_YEAR = 2011
 
-# A ticker whose period count falls below this fraction of the basket median is
-# flagged as suspiciously thin -- usually a wrong-CIK resolution, not a real gap.
-THIN_COVERAGE_FRACTION = 0.5
-
 OUTPUT_CSV = "data/edgar_audit.csv"
 RECORDS_CSV = "data/edgar_records.csv"
-
-SEC_TICKER_MAP_URL = "https://www.sec.gov/files/company_tickers.json"
-SEC_CONCEPT_URL = (
-    "https://data.sec.gov/api/xbrl/companyconcept/"
-    "CIK{cik}/us-gaap/EarningsPerShareDiluted.json"
-)
-SEC_TIMEOUT_SECONDS = 30
-
 
 # --------------------------------------------------------------------------
 # Small helpers
 # --------------------------------------------------------------------------
-
-
-def fail(message: str) -> None:
-    """Abort loudly. Every empty/missing source funnels through here."""
-    print(f"\n*** FATAL: {message}", file=sys.stderr)
-    sys.exit(1)
 
 
 def section(title: str) -> None:
@@ -99,30 +71,6 @@ def section(title: str) -> None:
     print("\n" + "=" * 78)
     print(title)
     print("=" * 78)
-
-
-def sec_headers() -> dict:
-    """Headers EDGAR requires. A missing/blank User-Agent gets a 403."""
-    if "REPLACE_ME" in SEC_CONTACT_EMAIL:
-        fail(
-            "SEC_CONTACT_EMAIL is still the placeholder. EDGAR requires a real "
-            "contact address in the User-Agent header; edit the constant at the "
-            "top of this script before running."
-        )
-    return {
-        # EDGAR's documented format: application name followed by a contact address.
-        "User-Agent": f"{SEC_APP_NAME} ({SEC_CONTACT_EMAIL})",
-        # EDGAR serves gzip; asking for it explicitly avoids oversized transfers.
-        "Accept-Encoding": "gzip, deflate",
-        "Accept": "application/json",
-    }
-
-
-def sec_get(url: str) -> requests.Response:
-    """Single throttled EDGAR GET. Every outbound call goes through here so the
-    rate limit cannot be bypassed by adding a call site later."""
-    time.sleep(SEC_SLEEP_SECONDS)  # sleep BEFORE, so bursts cannot slip through
-    return requests.get(url, headers=sec_headers(), timeout=SEC_TIMEOUT_SECONDS)
 
 
 def cluster_values(values: list, gap_threshold: int) -> list:
@@ -150,97 +98,6 @@ def cluster_values(values: list, gap_threshold: int) -> list:
 # --------------------------------------------------------------------------
 # EDGAR fetch
 # --------------------------------------------------------------------------
-
-
-def load_ticker_cik_map() -> dict:
-    """Fetch SEC's ticker->CIK map once and index it by upper-case ticker."""
-    response = sec_get(SEC_TICKER_MAP_URL)
-    if response.status_code != 200:
-        fail(
-            f"SEC ticker map request failed with HTTP {response.status_code}. "
-            f"A 403 here almost always means the User-Agent was rejected."
-        )
-
-    # The payload is a dict keyed by row number: {"0": {cik_str, ticker, title}, ...}
-    raw_map = response.json()
-    if not raw_map:
-        fail("SEC ticker map came back empty.")
-
-    indexed = {}
-    for entry in raw_map.values():
-        symbol = entry.get("ticker", "").upper()
-        # CIKs arrive as ints; the API path needs them padded to 10 digits.
-        indexed[symbol] = (str(entry["cik_str"]).zfill(10), entry.get("title", "?"))
-
-    return indexed
-
-
-def fetch_quarterly_eps(ticker: str, cik: str) -> pd.DataFrame:
-    """Return the quarterly-duration diluted-EPS facts for one CIK."""
-    response = sec_get(SEC_CONCEPT_URL.format(cik=cik))
-
-    if response.status_code == 403:
-        fail("EDGAR returned 403 Forbidden -- the User-Agent header was rejected.")
-    if response.status_code == 404:
-        fail(
-            f"EDGAR returned 404 for {ticker} (CIK {cik}). This company does not "
-            f"report us-gaap:EarningsPerShareDiluted under that CIK."
-        )
-    if response.status_code != 200:
-        fail(f"EDGAR request for {ticker} failed with HTTP {response.status_code}.")
-
-    payload = response.json()
-
-    # Facts are grouped by unit of measure; EPS is reported in USD per share.
-    units = payload.get("units", {})
-    if not units:
-        fail(f"EDGAR response for {ticker} (CIK {cik}) contained no 'units' block.")
-
-    unit_key = "USD/shares" if "USD/shares" in units else sorted(units)[0]
-    if unit_key != "USD/shares":
-        print(f"  NOTE: expected unit 'USD/shares', using '{unit_key}'.")
-
-    raw_records = units[unit_key]
-    if not raw_records:
-        fail(f"EDGAR returned an empty record list for {ticker} under '{unit_key}'.")
-
-    facts = pd.DataFrame(raw_records)
-    facts.attrs["raw_record_count"] = len(facts)
-
-    # 'end' is the period end; 'filed' is when the number became public. The gap
-    # between them is the entire reason this source is used, so both must exist.
-    for required_field in ("start", "end", "filed", "val"):
-        if required_field not in facts.columns:
-            fail(f"{ticker}: EDGAR records lack the '{required_field}' field entirely.")
-
-    end_dates = pd.to_datetime(facts["end"], errors="coerce")
-    filed_dates = pd.to_datetime(facts["filed"], errors="coerce")
-    start_dates = pd.to_datetime(facts["start"], errors="coerce")
-
-    # Records with no 'start' are instantaneous facts; ~365 day durations are annual
-    # EPS. Only ~quarter-length durations are quarterly EPS.
-    duration_days = (end_dates - start_dates).dt.days
-    is_quarterly = duration_days.between(QUARTER_MIN_DAYS, QUARTER_MAX_DAYS)
-
-    quarterly = facts.loc[is_quarterly].copy()
-    if quarterly.empty:
-        fail(
-            f"{ticker}: no records had a {QUARTER_MIN_DAYS}-{QUARTER_MAX_DAYS} day "
-            f"duration, so no quarterly EPS facts were found."
-        )
-
-    quarterly["ticker"] = ticker
-    quarterly["period_end"] = end_dates.loc[is_quarterly]
-    quarterly["filed_date"] = filed_dates.loc[is_quarterly]
-    quarterly["filing_lag_days"] = (quarterly["filed_date"] - quarterly["period_end"]).dt.days
-
-    # Missing-date counts are computed on the QUARTERLY subset, which is what the
-    # rest of the audit consumes; the raw count is carried alongside for reporting.
-    quarterly.attrs["raw_record_count"] = len(facts)
-    quarterly.attrs["missing_end"] = int(quarterly["period_end"].isna().sum())
-    quarterly.attrs["missing_filed"] = int(quarterly["filed_date"].isna().sum())
-
-    return quarterly
 
 
 # --------------------------------------------------------------------------
@@ -349,25 +206,6 @@ def find_anomalies(all_records: pd.DataFrame) -> dict:
         "value_mismatches": value_mismatches,
         "late_first_filing": late_first_filing,
     }
-
-
-def find_thin_coverage(summary_rows: list) -> list:
-    """Flag tickers whose history is far shorter than the basket's typical depth.
-
-    A ticker resolving to the wrong CIK looks exactly like a ticker with genuinely
-    short history, and it silently destroys the common study window (Q3). Comparing
-    against the basket median catches it without hardcoding a date.
-    """
-    period_counts = [row["unique_periods"] for row in summary_rows]
-    median_periods = sorted(period_counts)[len(period_counts) // 2]
-    threshold = median_periods * THIN_COVERAGE_FRACTION
-
-    thin = []
-    for row in summary_rows:
-        if row["unique_periods"] < threshold:
-            thin.append((row["ticker"], row["unique_periods"], median_periods))
-
-    return thin
 
 
 def print_anomalies(anomalies: dict) -> None:
@@ -552,16 +390,9 @@ def main() -> None:
     per_ticker_frames = []
 
     for ticker in TICKERS:
-        if ticker.upper() not in cik_map:
-            fail(f"Ticker {ticker} not found in the SEC ticker->CIK map.")
-
-        cik, company = cik_map[ticker.upper()]
-
-        # An override wins over the map; see CIK_OVERRIDES for why this exists.
-        if ticker.upper() in CIK_OVERRIDES:
-            override_cik = CIK_OVERRIDES[ticker.upper()]
-            print(f"\nNOTE: {ticker} CIK overridden {cik} -> {override_cik} (see CIK_OVERRIDES).")
-            cik = override_cik
+        cik, company, was_overridden = resolve_cik(ticker, cik_map)
+        if was_overridden:
+            print(f"\nNOTE: {ticker} CIK overridden to {cik} (see CIK_OVERRIDES in the loader).")
 
         quarterly = fetch_quarterly_eps(ticker, cik)
 
@@ -571,7 +402,9 @@ def main() -> None:
     all_records = pd.concat(per_ticker_frames, ignore_index=True)
 
     anomalies = find_anomalies(all_records)
-    anomalies["thin_coverage"] = find_thin_coverage(summary_rows)
+    # Loader's guard takes {ticker: unique_period_count}.
+    period_counts = {row["ticker"]: row["unique_periods"] for row in summary_rows}
+    anomalies["thin_coverage"] = find_thin_coverage(period_counts)
     print_anomalies(anomalies)
     print_cross_ticker_summary(all_records, summary_rows, anomalies)
 
