@@ -142,21 +142,53 @@ def load_ticker_cik_map() -> dict:
     return indexed
 
 
+def try_resolve_cik(ticker: str, cik_map: dict) -> tuple:
+    """Non-fatal CIK resolution: (cik|None, company|None, was_overridden).
+
+    Used by the universe census, where an unresolvable ticker is an expected
+    result to record -- a delisted or acquired company simply is not in SEC's
+    map of CURRENT registrants -- rather than a reason to abort.
+    """
+    symbol = ticker.upper().strip()
+
+    # An override applies even when the map has no entry, since the whole point
+    # is to reach a filer the map no longer points at.
+    if symbol in CIK_OVERRIDES:
+        _mapped, company = cik_map.get(symbol, (None, None))
+        return CIK_OVERRIDES[symbol], company, True
+
+    # Share classes are written differently by different sources: SEC's map uses
+    # a hyphen (BRK-B, BF-B) where most index listings use a dot (BRK.B, BF.B).
+    # Without this, large current constituents look unresolvable.
+    candidates = [symbol]
+    if "." in symbol:
+        candidates.append(symbol.replace(".", "-"))
+    if "-" in symbol:
+        candidates.append(symbol.replace("-", "."))
+
+    for candidate in candidates:
+        if candidate in CIK_OVERRIDES:
+            _mapped, company = cik_map.get(candidate, (None, None))
+            return CIK_OVERRIDES[candidate], company, True
+        if candidate in cik_map:
+            mapped_cik, company = cik_map[candidate]
+            return mapped_cik, company, False
+
+    return None, None, False
+
+
 def resolve_cik(ticker: str, cik_map: dict) -> tuple:
     """Return (cik, company_title, was_overridden) for one ticker.
 
+    Strict: aborts when the ticker cannot be resolved. Pipelines that treat an
+    unresolvable ticker as fatal use this; the census uses try_resolve_cik.
+
     An entry in CIK_OVERRIDES beats the SEC map; see that constant for why.
     """
-    symbol = ticker.upper()
-    if symbol not in cik_map:
+    cik, company, was_overridden = try_resolve_cik(ticker, cik_map)
+    if cik is None:
         fail(f"Ticker {ticker} not found in the SEC ticker->CIK map.")
-
-    mapped_cik, company = cik_map[symbol]
-
-    if symbol in CIK_OVERRIDES:
-        return CIK_OVERRIDES[symbol], company, True
-
-    return mapped_cik, company, False
+    return cik, company, was_overridden
 
 
 # --------------------------------------------------------------------------
@@ -164,39 +196,36 @@ def resolve_cik(ticker: str, cik_map: dict) -> tuple:
 # --------------------------------------------------------------------------
 
 
-def fetch_quarterly_eps(ticker: str, cik: str, concept: str = DEFAULT_CONCEPT) -> pd.DataFrame:
-    """Return every quarterly-duration EPS fact for one CIK, UNDEDUPED.
+def try_fetch_quarterly_eps(
+    ticker: str, cik: str, concept: str = DEFAULT_CONCEPT
+) -> tuple:
+    """Non-fatal fetch: (DataFrame|None, reason).
 
-    Each row is one XBRL fact as filed. A period appears once per filing that
-    reported it, so duplicates on (ticker, period_end) are expected and are the
-    caller's to resolve.
-
-    Columns are the raw EDGAR fields (start, end, val, accn, fy, fp, form, filed,
-    frame) plus derived: ticker, cik, period_end, filed_date, eps_diluted,
-    filing_lag_days. Frame-level counts are carried in .attrs.
+    reason is None on success, else a short machine-usable string naming why
+    nothing came back. The universe census needs this because a CIK returning
+    no EPS is a finding to record, not a crash.
     """
     response = sec_get(SEC_CONCEPT_URL.format(cik=cik, concept=concept))
 
     if response.status_code == 403:
+        # A 403 is a client-wide problem, not a per-ticker one: the User-Agent is
+        # being rejected, so every subsequent call fails too. Always fatal.
         fail("EDGAR returned 403 Forbidden -- the User-Agent header was rejected.")
     if response.status_code == 404:
-        fail(
-            f"EDGAR returned 404 for {ticker} (CIK {cik}). This company does not "
-            f"report us-gaap:{concept} under that CIK."
-        )
+        return None, "no_such_concept_for_cik"
     if response.status_code != 200:
-        fail(f"EDGAR request for {ticker} failed with HTTP {response.status_code}.")
+        return None, f"http_{response.status_code}"
 
     units = response.json().get("units", {})
     if not units:
-        fail(f"EDGAR response for {ticker} (CIK {cik}) contained no 'units' block.")
+        return None, "no_units_block"
 
     # EPS is reported in USD per share; fall back rather than assume.
     unit_key = "USD/shares" if "USD/shares" in units else sorted(units)[0]
 
     raw_records = units[unit_key]
     if not raw_records:
-        fail(f"EDGAR returned an empty record list for {ticker} under '{unit_key}'.")
+        return None, "empty_record_list"
 
     facts = pd.DataFrame(raw_records)
 
@@ -204,7 +233,7 @@ def fetch_quarterly_eps(ticker: str, cik: str, concept: str = DEFAULT_CONCEPT) -
     # between them is the entire reason this source is used, so both must exist.
     for required_field in ("start", "end", "filed", "val"):
         if required_field not in facts.columns:
-            fail(f"{ticker}: EDGAR records lack the '{required_field}' field entirely.")
+            return None, f"missing_field_{required_field}"
 
     end_dates = pd.to_datetime(facts["end"], errors="coerce")
     start_dates = pd.to_datetime(facts["start"], errors="coerce")
@@ -216,10 +245,7 @@ def fetch_quarterly_eps(ticker: str, cik: str, concept: str = DEFAULT_CONCEPT) -
 
     quarterly = facts.loc[is_quarterly].copy()
     if quarterly.empty:
-        fail(
-            f"{ticker}: no records had a {QUARTER_MIN_DAYS}-{QUARTER_MAX_DAYS} day "
-            f"duration, so no quarterly EPS facts were found."
-        )
+        return None, "no_quarterly_duration_facts"
 
     quarterly["ticker"] = ticker
     quarterly["cik"] = cik
@@ -235,7 +261,28 @@ def fetch_quarterly_eps(ticker: str, cik: str, concept: str = DEFAULT_CONCEPT) -
     quarterly.attrs["missing_end"] = int(quarterly["period_end"].isna().sum())
     quarterly.attrs["missing_filed"] = int(quarterly["filed_date"].isna().sum())
 
-    return quarterly
+    return quarterly, None
+
+
+def fetch_quarterly_eps(ticker: str, cik: str, concept: str = DEFAULT_CONCEPT) -> pd.DataFrame:
+    """Return every quarterly-duration EPS fact for one CIK, UNDEDUPED.
+
+    Strict wrapper around try_fetch_quarterly_eps: anything that stops facts
+    coming back aborts the run. Pipelines building a panel use this; the census,
+    where a barren CIK is a result worth recording, uses the try_ variant.
+
+    Each row is one XBRL fact as filed. A period appears once per filing that
+    reported it, so duplicates on (ticker, period_end) are expected and are the
+    caller's to resolve.
+
+    Columns are the raw EDGAR fields (start, end, val, accn, fy, fp, form, filed,
+    frame) plus derived: ticker, cik, period_end, filed_date, eps_diluted,
+    filing_lag_days. Frame-level counts are carried in .attrs.
+    """
+    facts, reason = try_fetch_quarterly_eps(ticker, cik, concept)
+    if facts is None:
+        fail(f"{ticker} (CIK {cik}): EDGAR returned no usable EPS facts [{reason}].")
+    return facts
 
 
 # --------------------------------------------------------------------------
