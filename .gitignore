@@ -222,3 +222,6 @@ __marimo__/
 *.parquet
 kaggle.json
 data/
+
+# Curated mapping data lives with the source, not in gitignored data/.
+!src/recovered_ciks.csv
