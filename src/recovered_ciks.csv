@@ -1,152 +1,152 @@
-ticker,company_name,match_kind,recovered_cik,n_eps_records,earliest_period_end
-ABMD,Abiomed,exact,0000815094,140.0,2010-09-30
-ACE,Chubb,exact_ambiguous,0000020171,80.0,2008-06-30
-ADS,Alliance Data Systems,exact,0001101215,186.0,2009-06-30
-AGN,Allergan,exact_ambiguous,0001578845,94.0,2012-03-31
-AKS,AK Steel,exact_ambiguous,0000918160,94.0,2008-06-30
-ALTR,Altera,exact,0000768251,40.0,2008-06-27
-ALXN,Alexion Pharmaceuticals,exact,0000899866,154.0,2009-06-30
-ANDV,Andeavor,exact,0000050104,115.0,2009-06-30
-ANR,Alpha Natural Resources,exact_ambiguous,0001301063,70.0,2008-09-30
-ANSS,Ansys,exact,0001013462,90.0,2009-06-30
-APOL,Apollo Education Group,exact,0000929887,102.0,2008-11-30
-ARG,Airgas,exact,0000804212,84.0,2009-06-30
-ARNC,Arconic,exact_ambiguous,0000004281,169.0,2008-06-30
-ATVI,Activision Blizzard,exact,0000718877,174.0,2008-06-30
-AVP,Avon Products,exact,0000008868,64.0,2008-06-30
-AYE,Allegheny Energy,exact,0000003673,10.0,2008-06-30
-BBBY,Bed Bath & Beyond,exact_ambiguous,0001130713,180.0,2010-06-30
-BHI,Baker Hughes,exact_ambiguous,0000808362,104.0,2008-06-30
-BIG,Big Lots,exact,0000768835,166.0,2009-08-01
-BMC,BMC Software,exact,0000835729,50.0,2008-06-30
-BMS,Bemis,exact_ambiguous,0000011199,118.0,2009-06-30
-BRCM,Broadcom Corporation,exact_ambiguous,0001730168,82.0,2017-01-29
-BXLT,Baxalta,exact,0001620546,14.0,2014-03-31
-CAM,Cameron International,exact_ambiguous,0000941548,96.0,2008-06-30
-CBE,Cooper Industries,exact_ambiguous,0001141982,38.0,2008-06-30
-CCE,Coca-Cola Enterprises,exact_ambiguous,0001491675,68.0,2010-12-31
-CDAY,Ceridian,exact_ambiguous,0000109758,30.0,2010-03-31
-CEPH,Cephalon,exact,0000873364,8.0,2009-06-30
-CERN,Cerner,exact,0000804753,152.0,2009-07-04
-CFN,Carefusion,exact,0001457543,46.0,2010-09-30
-CMA,Comerica,exact,0000028412,190.0,2009-03-31
-COL,Rockwell Collins,exact,0001137411,128.0,2008-06-30
-COV,Covidien,exact_ambiguous,0001385187,82.0,2008-06-27
-CPGX,Columbia Pipeline Group,exact,0001629995,22.0,2014-03-31
-CSC,Computer Sciences Corporation,exact,0000023082,50.0,2008-07-04
-CSRA,CSRA,exact_ambiguous,0001646383,22.0,2015-01-02
-CTLT,Catalent,exact,0001596783,120.0,2012-09-30
-CTXS,Citrix Systems,exact,0000877890,168.0,2008-06-30
-CVH,Coventry Health Care,exact,0001054833,34.0,2009-06-30
-CXO,Concho Resources,exact_ambiguous,0001358071,72.0,2009-06-30
-DF,Dean Foods,exact_ambiguous,0000931336,120.0,2009-06-30
-DISCA,"Discovery, Inc.",exact_ambiguous,0001437107,104.0,2009-03-31
-DISCK,Discovery Communications,exact_ambiguous,0001437107,104.0,2009-03-31
-DISH,Dish Network,exact_ambiguous,0001001082,182.0,2008-06-30
-DLPH,Delphi Automotive,exact,0001521332,178.0,2011-03-31
-DNB,Dun & Bradstreet,exact_ambiguous,0001059556,180.0,2008-06-30
-DNR,Denbury Resources,exact,0000945764,113.0,2008-06-30
-DO,Diamond Offshore Drilling,exact_ambiguous,0000949039,98.0,2008-06-30
-DPS,Dr Pepper Snapple Group,exact,0001418135,186.0,2009-03-31
-DRE,Duke Realty Corp,exact,0000783280,102.0,2009-06-30
-DTV,DirecTV,exact_ambiguous,0001465112,60.0,2009-03-31
-EMC,EMC Corporation,exact,0000790070,92.0,2008-06-30
-ENDP,Endo International,exact,0001593034,132.0,2013-03-31
-ESRX,Express Scripts,exact_ambiguous,0001532063,100.0,2011-03-31
-ETFC,E-Trade,exact,0001015780,142.0,2009-06-30
-EVHC,Envision Healthcare,exact_ambiguous,0001578318,44.0,2012-03-31
-FB,Facebook,exact,0001326801,89.0,2011-06-30
-FBHS,Fortune Brands Home & Security,exact,0001519751,154.0,2011-06-30
-FL,Foot Locker,exact,0000850209,179.0,2009-10-31
-FLIR,FLIR Systems,exact,0000354908,150.0,2008-06-30
-FLT,FleetCor Technologies,exact,0001175454,185.0,2010-03-31
-FRX,Forest Laboratories,exact_ambiguous,0000038074,60.0,2008-06-30
-FTR,Frontier Communications,exact,0000020520,90.0,2010-06-30
-GAS,AGL Resources.,exact,0001004155,94.0,2008-09-30
-GENZ,Genzyme,exact,0000732485,20.0,2008-06-30
-GGP,General Growth Properties,exact_ambiguous,0001496048,33.0,2010-12-31
-GMCR,Keurig Green Mountain,exact,0000909954,106.0,2009-06-27
-GPS,Gap,exact_ambiguous,0000039911,186.0,2008-08-02
-GR,Goodrich Corporation,exact,0000042542,18.0,2008-06-30
-HBI,Hanesbrands,exact,0001359841,168.0,2009-07-04
-HCBK,Hudson City Bancorp,exact,0000921847,78.0,2008-06-30
-HFC,HollyFrontier,exact_ambiguous,0000048039,150.0,2009-06-30
-HOLX,Hologic,exact,0000859737,188.0,2008-06-28
-HSP,Hospira,exact,0001274057,78.0,2008-06-30
-IGT,International Game Technology,exact_ambiguous,0000353944,33.0,2008-06-30
-INFO,IHS Markit,exact,0001598014,72.0,2015-02-28
-JNS,Janus Capital Group,exact_ambiguous,0001065865,90.0,2009-06-30
-JOY,Joy Global,exact,0000801898,48.0,2008-08-01
-JOYG,Joy Global,exact,0000801898,48.0,2008-08-01
-JWN,Nordstrom,exact_ambiguous,0000072333,174.0,2008-08-02
-KFT,Kraft Foods,exact_ambiguous,0001545158,38.0,2011-03-31
-KORS,Michael Kors,exact,0001530721,80.0,2012-06-30
-KRFT,Kraft Foods,exact_ambiguous,0001545158,38.0,2011-03-31
-KSU,Kansas City Southern,exact,0000054480,156.0,2008-06-30
-LLL,L3 Technologies,exact,0001039101,46.0,2015-03-27
-LM,Legg Mason,exact,0000704051,22.0,2008-06-30
-LSI,LSI Corporation,exact_ambiguous,0000703360,24.0,2009-07-05
-LVLT,Level 3 Communications,exact_ambiguous,0000794323,58.0,2009-06-30
-MDP,Meredith Corp,exact_ambiguous,0000065011,156.0,2009-09-30
-MEE,Massey Energy,exact,0000037748,12.0,2008-06-30
-MFE,McAfee,exact_ambiguous,0000890801,10.0,2008-06-30
-MHS,Medco Health Solutions,exact,0001170650,16.0,2008-06-28
-MJN,Mead Johnson Nutrition,exact_ambiguous,0001452575,94.0,2010-03-31
-MNK,Mallinckrodt,exact_ambiguous,0001567892,84.0,2012-06-29
-MOLX,Molex,exact,0000067472,44.0,2009-09-30
-MON,Monsanto,exact_ambiguous,0001110783,148.0,2008-11-30
-MRO,Marathon Oil,exact_ambiguous,0000101778,96.0,2008-06-30
-MWW,Monster Worldwide,exact,0001020416,76.0,2009-06-30
-NBL,Noble Energy,exact,0000072207,76.0,2008-06-30
-NOVL,Novell,exact,0000758004,4.0,2009-07-31
-NSM,National Semiconductor,exact,0000070530,6.0,2009-08-30
-NVLS,Novellus Systems,exact,0000836106,20.0,2009-06-27
-NYX,NYSE Euronext,exact,0001368007,30.0,2008-03-31
-PBCT,People's United Financial,exact,0001378946,172.0,2008-06-30
-PCL,Plum Creek Timber,exact,0000849213,28.0,2010-06-30
-PCP,Precision Castparts Corporation,exact,0000079958,87.0,2008-06-29
-PDCO,Patterson Companies,exact_ambiguous,0000891024,170.0,2009-07-25
-PETM,PetSmart,exact_ambiguous,0000863157,52.0,2009-08-02
-PGN,Progress Energy,exact_ambiguous,0001094093,22.0,2008-06-30
-PLL,Pall Corporation,exact,0000075829,30.0,2009-10-31
-PXD,Pioneer Natural Resources,exact,0001038357,66.0,2008-06-30
-QEP,QEP Resources,exact,0001108827,122.0,2010-03-31
-RAI,Reynolds American,exact,0001275283,114.0,2008-06-30
-RDC,Rowan Companies,exact_ambiguous,0000085408,28.0,2008-06-30
-RE,Everest Re,exact,0001095073,182.0,2009-06-30
-RHT,Red Hat,exact_ambiguous,0001087423,126.0,2009-05-31
-RSH,RadioShack,exact,0000096289,44.0,2009-03-31
-RTN,Raytheon Company,exact_ambiguous,0001047122,144.0,2008-06-29
-SAI,SAIC,exact,0001336920,156.0,2009-04-30
-SCG,SCANA,exact,0000754737,62.0,2009-06-30
-SHLD,Sears Holdings,exact,0001310067,76.0,2010-05-01
-SIAL,Sigma-Aldrich,exact_ambiguous,0000090185,40.0,2008-06-30
-SIVB,SVB Financial Group,exact,0000719739,156.0,2009-06-30
-SNI,Scripps Networks Interactive,exact,0001430602,100.0,2009-06-30
-SPLS,Staples,exact,0000791519,90.0,2008-08-02
-SRCL,Stericycle,exact,0000861878,192.0,2009-03-31
-STJ,St Jude Medical,exact,0000203077,100.0,2009-04-04
-SVU,Supervalu,exact,0000095521,48.0,2008-09-06
-SWN,Southwestern Energy,exact,0000007332,184.0,2008-06-30
-SWY,Safeway,exact,0000086144,71.0,2008-03-22
-TEG,Integrys Energy Group,exact,0000916863,54.0,2009-06-30
-TGNA,Tegna,exact,0000039899,100.0,2008-06-29
-TIF,Tiffany & Co,exact,0000098246,136.0,2009-07-31
-TLAB,Tellabs,exact,0000317771,42.0,2009-07-03
-TWC,Time Warner Cable,exact_ambiguous,0001377013,38.0,2009-03-31
-TWTR,Twitter,exact,0001418091,52.0,2013-03-31
-TWX,Time Warner,exact_ambiguous,0001105705,54.0,2008-06-30
-TYC,Tyco International,exact_ambiguous,0001608109,1.0,2014-06-27
-VAR,Varian Medical Systems,exact,0000203527,157.0,2008-06-27
-VIAB,Viacom,exact_ambiguous,0000813828,202.0,2008-06-30
-WCG,WellCare,exact_ambiguous,0001279363,120.0,2009-06-30
-WFM,Whole Foods Market,exact_ambiguous,0000865436,72.0,2009-04-12
-WFR,MEMC Electronic Materials,exact,0000945436,40.0,2008-06-30
-WLTW,Willis Towers Watson,exact,0001140536,136.0,2010-03-31
-WPX,WPX Energy,exact,0001518832,86.0,2014-03-31
-WYN,Wyndham Worldwide,exact,0001361658,180.0,2009-06-30
-X,United States Steel,exact,0001163302,104.0,2008-06-30
-XEC,Cimarex Energy,exact,0001168054,82.0,2010-03-31
-XL,XL Group,exact_ambiguous,0000875159,106.0,2009-06-30
-XLNX,Xilinx,exact,0000743988,152.0,2009-06-27
-YHOO,Yahoo!,exact_ambiguous,0001011006,104.0,2008-06-30
+ticker,company_name,match_kind,resolution_rule,recovered_cik,n_eps_records,earliest_period_end
+ABMD,Abiomed,exact,exact_name,0000815094,140.0,2010-09-30
+ACE,Chubb,ambiguous,b_single_overlap,0000020171,80.0,2008-06-30
+ADS,Alliance Data Systems,exact,exact_name,0001101215,186.0,2009-06-30
+AGN,Allergan,ambiguous,c_longest_overlap,0001578845,94.0,2012-03-31
+AKS,AK Steel,ambiguous,b_single_overlap,0000918160,94.0,2008-06-30
+ALTR,Altera,exact,exact_name,0000768251,40.0,2008-06-27
+ALXN,Alexion Pharmaceuticals,exact,exact_name,0000899866,154.0,2009-06-30
+ANDV,Andeavor,exact,exact_name,0000050104,115.0,2009-06-30
+ANR,Alpha Natural Resources,ambiguous,b_single_overlap,0001301063,70.0,2008-09-30
+ANSS,Ansys,exact,exact_name,0001013462,90.0,2009-06-30
+APOL,Apollo Education Group,exact,exact_name,0000929887,102.0,2008-11-30
+ARG,Airgas,exact,exact_name,0000804212,84.0,2009-06-30
+ARNC,Arconic,ambiguous,c_longest_overlap,0000004281,169.0,2008-06-30
+ATVI,Activision Blizzard,exact,exact_name,0000718877,174.0,2008-06-30
+AVP,Avon Products,exact,exact_name,0000008868,64.0,2008-06-30
+AYE,Allegheny Energy,exact,exact_name,0000003673,10.0,2008-06-30
+BBBY,Bed Bath & Beyond,ambiguous,c_longest_overlap,0000886158,164.0,2008-08-30
+BHI,Baker Hughes,ambiguous,c_longest_overlap,0000808362,104.0,2008-06-30
+BIG,Big Lots,exact,exact_name,0000768835,166.0,2009-08-01
+BMC,BMC Software,exact,exact_name,0000835729,50.0,2008-06-30
+BRCM,Broadcom Corporation,ambiguous,c_longest_overlap,0001054374,80.0,2008-06-30
+BXLT,Baxalta,exact,exact_name,0001620546,14.0,2014-03-31
+CAM,Cameron International,ambiguous,b_single_overlap,0000941548,96.0,2008-06-30
+CBE,Cooper Industries,ambiguous,b_single_overlap,0001141982,38.0,2008-06-30
+CCE,Coca-Cola Enterprises,ambiguous,b_single_overlap,0001491675,68.0,2010-12-31
+CEPH,Cephalon,exact,exact_name,0000873364,8.0,2009-06-30
+CERN,Cerner,exact,exact_name,0000804753,152.0,2009-07-04
+CFN,Carefusion,exact,exact_name,0001457543,46.0,2010-09-30
+CMA,Comerica,exact,exact_name,0000028412,190.0,2009-03-31
+COL,Rockwell Collins,exact,exact_name,0001137411,128.0,2008-06-30
+COV,Covidien,ambiguous,b_single_overlap,0001385187,82.0,2008-06-27
+CPGX,Columbia Pipeline Group,exact,exact_name,0001629995,22.0,2014-03-31
+CSC,Computer Sciences Corporation,exact,exact_name,0000023082,50.0,2008-07-04
+CSRA,CSRA,ambiguous,b_single_overlap,0001646383,22.0,2015-01-02
+CTLT,Catalent,exact,exact_name,0001596783,120.0,2012-09-30
+CTXS,Citrix Systems,exact,exact_name,0000877890,168.0,2008-06-30
+CVH,Coventry Health Care,exact,exact_name,0001054833,34.0,2009-06-30
+CXO,Concho Resources,ambiguous,b_single_overlap,0001358071,72.0,2009-06-30
+DF,Dean Foods,ambiguous,b_single_overlap,0000931336,120.0,2009-06-30
+DISCA,"Discovery, Inc.",ambiguous,b_single_overlap,0001437107,104.0,2009-03-31
+DISCK,Discovery Communications,ambiguous,b_single_overlap,0001437107,104.0,2009-03-31
+DISH,Dish Network,ambiguous,b_single_overlap,0001001082,182.0,2008-06-30
+DLPH,Delphi Automotive,exact,exact_name,0001521332,178.0,2011-03-31
+DNB,Dun & Bradstreet,ambiguous,c_longest_overlap,0001059556,180.0,2008-06-30
+DNR,Denbury Resources,exact,exact_name,0000945764,113.0,2008-06-30
+DO,Diamond Offshore Drilling,ambiguous,b_single_overlap,0000949039,98.0,2008-06-30
+DPS,Dr Pepper Snapple Group,exact,exact_name,0001418135,186.0,2009-03-31
+DRE,Duke Realty Corp,exact,exact_name,0000783280,102.0,2009-06-30
+DTV,DirecTV,ambiguous,b_single_overlap,0001465112,60.0,2009-03-31
+EMC,EMC Corporation,exact,exact_name,0000790070,92.0,2008-06-30
+ENDP,Endo International,exact,exact_name,0001593034,132.0,2013-03-31
+ESRX,Express Scripts,ambiguous,c_longest_overlap,0001532063,100.0,2011-03-31
+ESV,Ensco,ambiguous,b_single_overlap,0000314808,112.0,2008-06-30
+ETFC,E-Trade,exact,exact_name,0001015780,142.0,2009-06-30
+EVHC,Envision Healthcare,ambiguous,b_single_overlap,0001678531,26.0,2015-03-31
+FB,Facebook,exact,exact_name,0001326801,89.0,2011-06-30
+FBHS,Fortune Brands Home & Security,exact,exact_name,0001519751,154.0,2011-06-30
+FL,Foot Locker,exact,exact_name,0000850209,179.0,2009-10-31
+FLIR,FLIR Systems,exact,exact_name,0000354908,150.0,2008-06-30
+FLT,FleetCor Technologies,exact,exact_name,0001175454,185.0,2010-03-31
+FRX,Forest Laboratories,ambiguous,b_single_overlap,0000038074,60.0,2008-06-30
+FTR,Frontier Communications,exact,exact_name,0000020520,90.0,2010-06-30
+GAS,AGL Resources.,exact,exact_name,0001004155,94.0,2008-09-30
+GENZ,Genzyme,exact,exact_name,0000732485,20.0,2008-06-30
+GGP,General Growth Properties,ambiguous,b_single_overlap,0001496048,33.0,2010-12-31
+GMCR,Keurig Green Mountain,exact,exact_name,0000909954,106.0,2009-06-27
+GPS,Gap,ambiguous,b_single_overlap,0000039911,186.0,2008-08-02
+GR,Goodrich Corporation,exact,exact_name,0000042542,18.0,2008-06-30
+HBI,Hanesbrands,exact,exact_name,0001359841,168.0,2009-07-04
+HCBK,Hudson City Bancorp,exact,exact_name,0000921847,78.0,2008-06-30
+HFC,HollyFrontier,ambiguous,b_single_overlap,0000048039,150.0,2009-06-30
+HOLX,Hologic,exact,exact_name,0000859737,188.0,2008-06-28
+HSP,Hospira,exact,exact_name,0001274057,78.0,2008-06-30
+IGT,International Game Technology,ambiguous,b_single_overlap,0000353944,33.0,2008-06-30
+INFO,IHS Markit,exact,exact_name,0001598014,72.0,2015-02-28
+JNS,Janus Capital Group,ambiguous,b_single_overlap,0001065865,90.0,2009-06-30
+JOY,Joy Global,exact,exact_name,0000801898,48.0,2008-08-01
+JOYG,Joy Global,exact,exact_name,0000801898,48.0,2008-08-01
+JWN,Nordstrom,ambiguous,b_single_overlap,0000072333,174.0,2008-08-02
+KFT,Kraft Foods,ambiguous,b_single_overlap,0001545158,38.0,2011-03-31
+KORS,Michael Kors,exact,exact_name,0001530721,80.0,2012-06-30
+KRFT,Kraft Foods,ambiguous,b_single_overlap,0001545158,38.0,2011-03-31
+KSU,Kansas City Southern,exact,exact_name,0000054480,156.0,2008-06-30
+LLL,L3 Technologies,exact,exact_name,0001039101,46.0,2015-03-27
+LLTC,LINEAR TECHNOLOGY CA,fuzzy,b_single_overlap,0000791907,88.0,2009-09-27
+LM,Legg Mason,exact,exact_name,0000704051,22.0,2008-06-30
+LSI,LSI Corporation,ambiguous,b_single_overlap,0000703360,24.0,2009-07-05
+LVLT,Level 3 Communications,ambiguous,b_single_overlap,0000794323,58.0,2009-06-30
+MDP,Meredith Corp,ambiguous,b_single_overlap,0000065011,156.0,2009-09-30
+MEE,Massey Energy,exact,exact_name,0000037748,12.0,2008-06-30
+MHS,Medco Health Solutions,exact,exact_name,0001170650,16.0,2008-06-28
+MJN,Mead Johnson Nutrition,ambiguous,b_single_overlap,0001452575,94.0,2010-03-31
+MNK,Mallinckrodt,ambiguous,b_single_overlap,0001567892,84.0,2012-06-29
+MOLX,Molex,exact,exact_name,0000067472,44.0,2009-09-30
+MON,Monsanto,ambiguous,b_single_overlap,0001110783,148.0,2008-11-30
+MRO,Marathon Oil,ambiguous,b_single_overlap,0000101778,96.0,2008-06-30
+MWW,Monster Worldwide,exact,exact_name,0001020416,76.0,2009-06-30
+NBL,Noble Energy,exact,exact_name,0000072207,76.0,2008-06-30
+NFX,NEWFIELD EXPLORATION DE,fuzzy,b_single_overlap,0000912750,120.0,2008-06-30
+NLSN,Nielsen Holdings,ambiguous,b_single_overlap,0001492633,146.0,2010-09-30
+NOVL,Novell,exact,exact_name,0000758004,4.0,2009-07-31
+NSM,National Semiconductor,exact,exact_name,0000070530,6.0,2009-08-30
+NVLS,Novellus Systems,exact,exact_name,0000836106,20.0,2009-06-27
+NYX,NYSE Euronext,exact,exact_name,0001368007,30.0,2008-03-31
+PBCT,People's United Financial,exact,exact_name,0001378946,172.0,2008-06-30
+PCL,Plum Creek Timber,exact,exact_name,0000849213,28.0,2010-06-30
+PCP,Precision Castparts Corporation,exact,exact_name,0000079958,87.0,2008-06-29
+PDCO,Patterson Companies,ambiguous,b_single_overlap,0000891024,170.0,2009-07-25
+PETM,PetSmart,ambiguous,b_single_overlap,0000863157,52.0,2009-08-02
+PGN,Progress Energy,ambiguous,b_single_overlap,0001094093,22.0,2008-06-30
+PLL,Pall Corporation,exact,exact_name,0000075829,30.0,2009-10-31
+PXD,Pioneer Natural Resources,exact,exact_name,0001038357,66.0,2008-06-30
+QEP,QEP Resources,exact,exact_name,0001108827,122.0,2010-03-31
+RAI,Reynolds American,exact,exact_name,0001275283,114.0,2008-06-30
+RDC,Rowan Companies,ambiguous,b_single_overlap,0000085408,28.0,2008-06-30
+RE,Everest Re,exact,exact_name,0001095073,182.0,2009-06-30
+RHT,Red Hat,ambiguous,b_single_overlap,0001087423,126.0,2009-05-31
+RSH,RadioShack,exact,exact_name,0000096289,44.0,2009-03-31
+RTN,Raytheon Company,ambiguous,b_single_overlap,0001047122,144.0,2008-06-29
+SAI,SAIC,exact,exact_name,0001336920,156.0,2009-04-30
+SCG,SCANA,exact,exact_name,0000754737,62.0,2009-06-30
+SHLD,Sears Holdings,exact,exact_name,0001310067,76.0,2010-05-01
+SIAL,Sigma-Aldrich,ambiguous,b_single_overlap,0000090185,40.0,2008-06-30
+SIVB,SVB Financial Group,exact,exact_name,0000719739,156.0,2009-06-30
+SNI,Scripps Networks Interactive,exact,exact_name,0001430602,100.0,2009-06-30
+SPLS,Staples,exact,exact_name,0000791519,90.0,2008-08-02
+SRCL,Stericycle,exact,exact_name,0000861878,192.0,2009-03-31
+STJ,St Jude Medical,exact,exact_name,0000203077,100.0,2009-04-04
+SVU,Supervalu,exact,exact_name,0000095521,48.0,2008-09-06
+SWN,Southwestern Energy,exact,exact_name,0000007332,184.0,2008-06-30
+SWY,Safeway,exact,exact_name,0000086144,71.0,2008-03-22
+TEG,Integrys Energy Group,exact,exact_name,0000916863,54.0,2009-06-30
+TGNA,Tegna,exact,exact_name,0000039899,100.0,2008-06-29
+TIF,Tiffany & Co,exact,exact_name,0000098246,136.0,2009-07-31
+TLAB,Tellabs,exact,exact_name,0000317771,42.0,2009-07-03
+TWC,Time Warner Cable,ambiguous,b_single_overlap,0001377013,38.0,2009-03-31
+TWTR,Twitter,exact,exact_name,0001418091,52.0,2013-03-31
+TWX,Time Warner,ambiguous,b_single_overlap,0001105705,54.0,2008-06-30
+VAR,Varian Medical Systems,exact,exact_name,0000203527,157.0,2008-06-27
+VIAB,Viacom,ambiguous,c_longest_overlap,0000813828,202.0,2008-06-30
+WCG,WellCare,ambiguous,b_single_overlap,0001279363,120.0,2009-06-30
+WFM,Whole Foods Market,ambiguous,b_single_overlap,0000865436,72.0,2009-04-12
+WFR,MEMC Electronic Materials,exact,exact_name,0000945436,40.0,2008-06-30
+WLTW,Willis Towers Watson,exact,exact_name,0001140536,136.0,2010-03-31
+WPX,WPX Energy,exact,exact_name,0001518832,86.0,2014-03-31
+WYN,Wyndham Worldwide,exact,exact_name,0001361658,180.0,2009-06-30
+X,United States Steel,exact,exact_name,0001163302,104.0,2008-06-30
+XEC,Cimarex Energy,exact,exact_name,0001168054,82.0,2010-03-31
+XL,XL Group,ambiguous,b_single_overlap,0000875159,106.0,2009-06-30
+XLNX,Xilinx,exact,exact_name,0000743988,152.0,2009-06-27
+YHOO,Yahoo!,ambiguous,b_single_overlap,0001011006,104.0,2008-06-30

@@ -47,47 +47,54 @@ CIK_OVERRIDES = {
     "BEAM": "0000789073",  # Beam Inc / Fortune Brands (map returns Beam Therapeutics)
 }
 
-# Corporate succession needs a CIK CHAIN, not a single override.
+# Corporate succession needs DATE-RANGED CIK SPANS, not a single override.
 #
 # When a company reorganizes, its filing history splits across CIKs: the
-# historical filer stops, a successor starts. Verified against EDGAR, a plain
-# override REPLACES rather than extends, and for most of these it trades recent
-# years for old ones -- DIS -7.5yr, CI -7.8yr, LIN -7.8yr, MDT -11.4yr of recent
-# history. So these are recorded as chains for a caller that UNIONS them.
+# historical filer stops, a successor starts. A plain override REPLACES rather
+# than extends, trading recent years for old ones -- DIS -7.5yr, CI -7.8yr,
+# LIN -7.8yr, MDT -11.4yr. Spans keep BOTH.
 #
-# Two cautions before consuming this:
-#   - 11 of these chains are NON-CONTIGUOUS: the historical CIK stops filing well
-#     before the successor starts, leaving a genuine hole (LIFE ~11.5yr, SLE
-#     ~10.5yr, EP ~9yr). A union does not invent the missing quarters.
-#   - Some historical CIKs LIVE ON as a different company. CIK 4281 (Alcoa Inc)
-#     became Howmet Aerospace, so its post-2016 filings are NOT Alcoa Corp's. A
-#     naive union contaminates the recent end; these need date-bounded segments.
-# Ordered oldest-first. Verified by fetching record counts, not asserted.
-CIK_HISTORY = {
-    "AA":   ["0000004281", "0001675149"],  # Alcoa Inc -> Alcoa Corp (4281 becomes Howmet)
-    "ADT":  ["0001546640", "0001703056"],
-    "APA":  ["0000006769", "0001841666"],  # Apache Corp -> APA Corp
-    "APC":  ["0000773910", "0002080921"],
-    "AVGO": ["0001441634", "0001649338", "0001730168"],  # Avago -> Broadcom Ltd -> Broadcom Inc
-    "BLK":  ["0001364742", "0002012383"],
-    "CI":   ["0000701221", "0001739940"],  # Cigna Corp -> Cigna Group
-    "CPWR": ["0000859014", "0000827099"],
-    "DIS":  ["0001001039", "0001744489"],  # TWDC Enterprises -> Walt Disney Co
-    "DV":   ["0000730464", "0001819928"],
-    "EP":   ["0001066107", "0000887396"],
-    "FTI":  ["0001135152", "0001681459"],
-    "GOOGL": ["0001288776", "0001652044"],  # Google Inc -> Alphabet Inc
-    "LIFE": ["0001073431", "0001788451"],
-    "LIN":  ["0000884905", "0001707925"],  # Praxair/Linde Inc -> Linde plc
-    "MDT":  ["0000064670", "0001613103"],  # Medtronic Inc -> Medtronic plc
-    "NE":   ["0001458891", "0001895262"],
-    "PSKY": ["0000813828", "0002041610"],  # ViacomCBS/Paramount -> Paramount Skydance
-    "S":    ["0000101830", "0001583708"],
-    "SLE":  ["0000023666", "0001621672"],
-    "STI":  ["0000750556", "0001881551"],
-    "TE":   ["0000350563", "0001992243"],
-    "VTRS": ["0001623613", "0001792044"],  # Mylan NV -> Viatris
-    "XRX":  ["0000108772", "0001770450"],
+# Each entry is (cik, valid_from, valid_to) with INCLUSIVE bounds on period_end;
+# None means open-ended. Facts outside a span are discarded, which is what makes
+# this safe where a plain union is not: CIK 4281 (Alcoa Inc) lived on as Howmet
+# Aerospace, so bounding its span at the succession date keeps Howmet's later
+# filings out of Alcoa Corp's history. Boundaries are set at the successor's
+# first period_end, so spans never overlap -- asserted at load time.
+CIK_SPANS = {
+    "AA":    [("0000004281", None, "2016-03-30"), ("0001675149", "2016-03-31", None)],
+    "ADT":   [("0001546640", None, "2017-03-30"), ("0001703056", "2017-03-31", None)],
+    "APA":   [("0000006769", None, "2020-12-30"), ("0001841666", "2020-12-31", None)],
+    "APC":   [("0000773910", None, "2025-03-30"), ("0002080921", "2025-03-31", None)],
+    "AVGO":  [("0001441634", None, "2015-01-31"), ("0001649338", "2015-02-01", "2017-01-28"),
+              ("0001730168", "2017-01-29", None)],
+    "BLK":   [("0001364742", None, "2023-09-29"), ("0002012383", "2023-09-30", None)],
+    "CI":    [("0000701221", None, "2017-03-30"), ("0001739940", "2017-03-31", None)],
+    "CPWR":  [("0000859014", None, "2020-06-29"), ("0000827099", "2020-06-30", None)],
+    "DIS":   [("0001001039", None, "2016-12-30"), ("0001744489", "2016-12-31", None)],
+    "DV":    [("0000730464", None, "2020-03-30"), ("0001819928", "2020-03-31", None)],
+    "EP":    [("0001066107", None, "2021-03-30"), ("0000887396", "2021-03-31", None)],
+    "FTI":   [("0001135152", None, "2016-03-30"), ("0001681459", "2016-03-31", None)],
+    "GOOGL": [("0001288776", None, "2014-09-29"), ("0001652044", "2014-09-30", None)],
+    "LIFE":  [("0001073431", None, "2025-03-30"), ("0001788451", "2025-03-31", None)],
+    "LIN":   [("0000884905", None, "2017-03-30"), ("0001707925", "2017-03-31", None)],
+    "MDT":   [("0000064670", None, "2013-07-25"), ("0001613103", "2013-07-26", None)],
+    "NE":    [("0001458891", None, "2021-09-29"), ("0001895262", "2021-09-30", None)],
+    "PSKY":  [("0000813828", None, "2024-09-29"), ("0002041610", "2024-09-30", None)],
+    "S":     [("0000101830", None, "2020-07-30"), ("0001583708", "2020-07-31", None)],
+    "SLE":   [("0000023666", None, "2024-09-29"), ("0001621672", "2024-09-30", None)],
+    "STI":   [("0000750556", None, "2023-03-30"), ("0001881551", "2023-03-31", None)],
+    "TE":    [("0000350563", None, "2023-03-30"), ("0001992243", "2023-03-31", None)],
+    "VTRS":  [("0001623613", None, "2020-03-30"), ("0001792044", "2020-03-31", None)],
+    "XRX":   [("0000108772", None, "2018-09-29"), ("0001770450", "2018-09-30", None)],
+}
+
+# Name matches verified as WRONG and permanently barred from re-proposal.
+# A high similarity score on a short name means nothing: one character separates
+# these pairs, and they are unrelated companies.
+REJECTED_MATCHES = {
+    # ticker: (proposed SEC name, why)
+    "CA":  ("CYA TECHNOLOGIES", "one-character edit from CA Technologies; unrelated filer"),
+    "HAR": ("THURMAN INTERNATIONAL", "T-H-U-R-M-A-N vs H-A-R-M-A-N; unrelated filer"),
 }
 
 # Tickers whose CIK was recovered by COMPANY NAME rather than ticker, because
@@ -375,3 +382,79 @@ def find_thin_coverage(period_counts: dict) -> list:
             thin.append((ticker, count, median_periods))
 
     return thin
+
+
+# --------------------------------------------------------------------------
+# Date-ranged CIK spans
+# --------------------------------------------------------------------------
+
+
+def assert_no_overlapping_spans(ticker: str, spans: list) -> None:
+    """Abort if a ticker's spans overlap.
+
+    Overlapping spans would let two filers claim the same period_end, and the
+    dedupe downstream would silently pick between them by filing date rather
+    than by which entity actually was the company then.
+    """
+    parsed = []
+    for cik, valid_from, valid_to in spans:
+        start = pd.Timestamp.min if valid_from is None else pd.Timestamp(valid_from)
+        end = pd.Timestamp.max if valid_to is None else pd.Timestamp(valid_to)
+        if start > end:
+            fail(f"{ticker}: span for CIK {cik} has valid_from after valid_to.")
+        parsed.append((start, end, cik))
+
+    parsed.sort()
+    for earlier, later in zip(parsed, parsed[1:]):
+        # Bounds are inclusive, so touching endpoints are already an overlap.
+        if later[0] <= earlier[1]:
+            fail(
+                f"{ticker}: overlapping CIK spans -- {earlier[2]} ends {earlier[1].date()} "
+                f"but {later[2]} starts {later[0].date()}."
+            )
+
+
+def fetch_quarterly_eps_spanned(ticker: str, spans: list) -> pd.DataFrame:
+    """Concatenate quarterly EPS across a ticker's CIK spans.
+
+    Each span contributes only the facts whose period_end falls inside it, so a
+    historical CIK that later became a different company cannot contribute its
+    post-succession filings. The result is deduped on (ticker, period_end)
+    keeping MIN(filed), exactly as a single-CIK fetch would be.
+    """
+    assert_no_overlapping_spans(ticker, spans)
+
+    pieces = []
+    for cik, valid_from, valid_to in spans:
+        facts, reason = try_fetch_quarterly_eps(ticker, cik)
+        if facts is None:
+            # A barren span is not fatal: the other spans may still cover the
+            # ticker, and a chain is often built from partly-empty registrants.
+            print(f"    NOTE {ticker}: span CIK {cik} returned nothing [{reason}]")
+            continue
+
+        within = pd.Series(True, index=facts.index)
+        if valid_from is not None:
+            within &= facts["period_end"] >= pd.Timestamp(valid_from)
+        if valid_to is not None:
+            within &= facts["period_end"] <= pd.Timestamp(valid_to)
+
+        pieces.append(facts.loc[within])
+
+    if not pieces:
+        return None
+
+    combined = pd.concat(pieces, ignore_index=True)
+    if combined.empty:
+        return None
+
+    # Same rule as everywhere else: the first filing of a period is the
+    # point-in-time-correct one.
+    combined = combined.sort_values(["ticker", "period_end", "filed_date"])
+
+    return combined
+
+
+def resolve_spans(ticker: str) -> list | None:
+    """Return the CIK spans for a ticker, or None if it has no chain."""
+    return CIK_SPANS.get(ticker.upper())
