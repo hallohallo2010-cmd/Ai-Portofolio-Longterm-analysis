@@ -458,3 +458,53 @@ def fetch_quarterly_eps_spanned(ticker: str, spans: list) -> pd.DataFrame:
 def resolve_spans(ticker: str) -> list | None:
     """Return the CIK spans for a ticker, or None if it has no chain."""
     return CIK_SPANS.get(ticker.upper())
+
+
+# --------------------------------------------------------------------------
+# Unified resolution
+# --------------------------------------------------------------------------
+
+
+def resolve_ticker_spans(ticker: str, cik_map: dict, recovered: dict) -> tuple:
+    """Resolve a ticker to CIK spans, in strict precedence order.
+
+    Returns (spans, route) where spans is [(cik, valid_from, valid_to)] and route
+    names which source answered. Precedence matters:
+
+      1. CIK_SPANS      -- a curated succession chain beats everything, because
+                           it is the only source that knows the company's
+                           filings are split across several registrants.
+      2. CIK_OVERRIDES  -- a single corrected CIK, for ticker reuse and for XOM.
+      3. recovered      -- name-recovered CIK for a delisted/acquired filer that
+                           SEC's current-registrant map cannot express.
+      4. cik_map        -- the ordinary ticker lookup.
+
+    Returns ([], "unresolved") when nothing answers.
+    """
+    symbol = ticker.upper().strip()
+
+    if symbol in CIK_SPANS:
+        return CIK_SPANS[symbol], "CIK_SPANS"
+
+    if symbol in CIK_OVERRIDES:
+        return [(CIK_OVERRIDES[symbol], None, None)], "CIK_OVERRIDES"
+
+    if symbol in recovered:
+        return [(recovered[symbol], None, None)], "recovered_ciks"
+
+    # Share-class separators differ between sources (BRK.B vs BRK-B).
+    for candidate in (symbol, symbol.replace(".", "-"), symbol.replace("-", ".")):
+        if candidate in cik_map:
+            return [(cik_map[candidate][0], None, None)], "ticker_map"
+
+    return [], "unresolved"
+
+
+def describe_spans(spans: list) -> str:
+    """Compact provenance string for the cik_span_used column."""
+    parts = []
+    for cik, valid_from, valid_to in spans:
+        start = valid_from or ""
+        end = valid_to or ""
+        parts.append(f"{cik}[{start}:{end}]" if (start or end) else cik)
+    return "|".join(parts)

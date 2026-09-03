@@ -225,3 +225,6 @@ data/
 
 # Curated mapping data lives with the source, not in gitignored data/.
 !src/recovered_ciks.csv
+
+# Phase 0 deliverable: the panel itself is tracked, the rest of data/ is not.
+!data/eps_panel.parquet
