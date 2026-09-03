@@ -221,10 +221,12 @@ __marimo__/
 *.csv
 *.parquet
 kaggle.json
-data/
+data/*
 
 # Curated mapping data lives with the source, not in gitignored data/.
 !src/recovered_ciks.csv
 
 # Phase 0 deliverable: the panel itself is tracked, the rest of data/ is not.
+# Note "data/*" above rather than "data/": git does not descend into an ignored
+# directory, so a negation inside one never matches.
 !data/eps_panel.parquet
