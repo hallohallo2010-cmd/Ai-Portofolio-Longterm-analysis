@@ -125,6 +125,12 @@ SEC_CONCEPT_URL = (
     "https://data.sec.gov/api/xbrl/companyconcept/"
     "CIK{cik}/us-gaap/{concept}.json"
 )
+# The companyconcept endpoint is not reliable for every filer: verified cases
+# (ABT CIK 1800, AMT CIK 1053507) return HTTP 200 with an EMPTY record list while
+# companyfacts holds hundreds of records for the same concept and CIK. Falling
+# back to companyfacts recovers them at the cost of one larger request, taken
+# only when companyconcept comes back empty or 404.
+SEC_COMPANYFACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
 DEFAULT_CONCEPT = "EarningsPerShareDiluted"
 
 # --------------------------------------------------------------------------
@@ -266,37 +272,38 @@ def resolve_cik(ticker: str, cik_map: dict) -> tuple:
 # --------------------------------------------------------------------------
 
 
-def try_fetch_quarterly_eps(
-    ticker: str, cik: str, concept: str = DEFAULT_CONCEPT
-) -> tuple:
-    """Non-fatal fetch: (DataFrame|None, reason).
+def _companyfacts_records(cik: str, concept: str) -> tuple:
+    """Pull a concept's records out of the bulk companyfacts payload.
 
-    reason is None on success, else a short machine-usable string naming why
-    nothing came back. The universe census needs this because a CIK returning
-    no EPS is a finding to record, not a crash.
+    Used only when companyconcept yields nothing. Returns (records, reason).
     """
-    response = sec_get(SEC_CONCEPT_URL.format(cik=cik, concept=concept))
+    response = sec_get(SEC_COMPANYFACTS_URL.format(cik=cik))
 
     if response.status_code == 403:
-        # A 403 is a client-wide problem, not a per-ticker one: the User-Agent is
-        # being rejected, so every subsequent call fails too. Always fatal.
         fail("EDGAR returned 403 Forbidden -- the User-Agent header was rejected.")
     if response.status_code == 404:
-        return None, "no_such_concept_for_cik"
+        return [], "no_such_cik", None
     if response.status_code != 200:
-        return None, f"http_{response.status_code}"
+        return [], f"companyfacts_http_{response.status_code}", None
 
-    units = response.json().get("units", {})
+    concept_block = response.json().get("facts", {}).get("us-gaap", {}).get(concept)
+    if not concept_block:
+        return [], "concept_not_reported", None
+
+    units = concept_block.get("units", {})
     if not units:
-        return None, "no_units_block"
+        return [], "no_units_block", None
 
-    # EPS is reported in USD per share; fall back rather than assume.
     unit_key = "USD/shares" if "USD/shares" in units else sorted(units)[0]
+    records = units[unit_key]
 
-    raw_records = units[unit_key]
-    if not raw_records:
-        return None, "empty_record_list"
+    return (records, None, unit_key) if records else ([], "empty_record_list", unit_key)
 
+
+def _shape_quarterly_facts(
+    ticker: str, cik: str, raw_records: list, source: str, unit_key: str = "USD/shares"
+) -> tuple:
+    """Turn raw XBRL records into the quarterly frame the pipeline expects."""
     facts = pd.DataFrame(raw_records)
 
     # 'end' is the period end; 'filed' is when the number became public. The gap
@@ -331,7 +338,55 @@ def try_fetch_quarterly_eps(
     quarterly.attrs["missing_end"] = int(quarterly["period_end"].isna().sum())
     quarterly.attrs["missing_filed"] = int(quarterly["filed_date"].isna().sum())
 
+    quarterly.attrs["source"] = source
+
     return quarterly, None
+
+
+def try_fetch_quarterly_eps(
+    ticker: str, cik: str, concept: str = DEFAULT_CONCEPT
+) -> tuple:
+    """Non-fatal fetch: (DataFrame|None, reason).
+
+    reason is None on success, else a short machine-usable string naming why
+    nothing came back. The universe census needs this because a CIK returning
+    no EPS is a finding to record, not a crash.
+    """
+    response = sec_get(SEC_CONCEPT_URL.format(cik=cik, concept=concept))
+
+    if response.status_code == 403:
+        # A 403 is a client-wide problem, not a per-ticker one: the User-Agent is
+        # being rejected, so every subsequent call fails too. Always fatal.
+        fail("EDGAR returned 403 Forbidden -- the User-Agent header was rejected.")
+    if response.status_code == 404:
+        # Not proof the concept is absent -- companyconcept 404s on filers whose
+        # companyfacts payload still carries the concept.
+        raw_records, fallback_reason, fallback_unit = _companyfacts_records(cik, concept)
+        if raw_records:
+            return _shape_quarterly_facts(
+                ticker, cik, raw_records, "companyfacts", fallback_unit
+            )
+        return None, fallback_reason
+    if response.status_code != 200:
+        return None, f"http_{response.status_code}"
+
+    units = response.json().get("units", {})
+
+    raw_records = []
+    if units:
+        # EPS is reported in USD per share; fall back rather than assume.
+        unit_key = "USD/shares" if "USD/shares" in units else sorted(units)[0]
+        raw_records = units[unit_key]
+
+    if not raw_records:
+        # companyconcept came back empty for a filer that may still report the
+        # concept; ask companyfacts before giving up.
+        raw_records, fallback_reason, fallback_unit = _companyfacts_records(cik, concept)
+        if not raw_records:
+            return None, fallback_reason
+        return _shape_quarterly_facts(ticker, cik, raw_records, "companyfacts", fallback_unit)
+
+    return _shape_quarterly_facts(ticker, cik, raw_records, "companyconcept", unit_key)
 
 
 def fetch_quarterly_eps(ticker: str, cik: str, concept: str = DEFAULT_CONCEPT) -> pd.DataFrame:
