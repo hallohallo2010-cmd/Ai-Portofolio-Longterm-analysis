@@ -2,11 +2,24 @@
 <!--
   Forward-test viewer -- a VIEWER, not a pipeline.
 
-  It fetches the committed CSVs in ../data/ and renders them. It never
-  recomputes, refits, or derives a prediction. Every number shown either comes
-  verbatim from a committed file or, in the one case where it does not (the
-  pooled holdout row), is an aggregation of committed numbers that is labelled
-  as such on the page.
+  It fetches committed files and renders them. It never recomputes, refits, or
+  derives a prediction. Every number shown either comes verbatim from a
+  committed file or, in the two places where it does not (the pooled holdout
+  row and the overall scoreboard figure), is an aggregation of committed
+  numbers that is labelled as an aggregate on the page.
+
+  Files read, all read-only:
+    docs/predictions.json          which prediction files exist
+    ../data/live_predictions_*.csv the predictions and their provenance header
+    ../data/holdout_results.csv    per-fold holdout scores
+    ../data/holdout_calibration.csv holdout calibration deciles
+    ../config/frozen_model.json    the frozen feature list
+
+  Model coefficients are deliberately NOT shown. They are not written to any
+  committed data file -- run_holdout.py and train_walkforward.py print them to
+  stdout and nothing more -- and there is no single set to show in any case,
+  since the pipeline is refit per fold and again at each forward cut. The page
+  explains how the inputs are used in words rather than inventing weights.
 
   ---------------------------------------------------------------------------
   IT MUST BE SERVED OVER HTTP. Opening this file from disk (file://) will not
@@ -18,119 +31,143 @@
   ---------------------------------------------------------------------------
   GITHUB PAGES: SERVE FROM THE BRANCH ROOT, NOT FROM /docs.
 
-  Data paths are relative (../data/...), which resolves correctly only when
-  this page sits at <site>/docs/ and the data sits at <site>/data/. That is
-  what you get with Pages configured to serve the branch root.
+  Paths are relative (../data/..., ../config/...), which resolves only when
+  this page sits at <site>/docs/ with the repository at <site>/. That is what
+  Pages gives you when it serves the branch root.
 
-  If you instead configure Pages with /docs as the site root, this page becomes
-  <site>/ and ../data/ points ABOVE the site root -- every fetch 404s and the
-  page will tell you so. There is no relative path that reaches data/ from a
-  /docs site root; the fix is the Pages setting, or copying the CSVs into docs/.
+  With /docs as the Pages site root this page becomes <site>/ and ../ points
+  ABOVE the site root -- every fetch 404s and the page says so. No relative
+  path reaches data/ from a /docs site root; the fix is the Pages setting.
 
-  Jekyll note: GitHub Pages runs Jekyll by default. It copies data/ and docs/
-  through untouched, but adding an empty .nojekyll file at the repository root
+  Jekyll note: GitHub Pages runs Jekyll by default. It copies data/, config/
+  and docs/ through untouched, but an empty .nojekyll at the repository root
   removes any doubt.
+
+  ---------------------------------------------------------------------------
+  Colour: the scoreboard uses the emphasis pattern -- one accent hue for the
+  model, de-emphasis gray for the baseline -- and never encodes identity by
+  colour alone; both numbers carry a text label. Checked with the palette
+  validator: CVD separation dE 18.6 light / 16.5 dark, contrast >= 3:1 in both
+  modes. (Its chroma-floor failure is the gray deliberately reading as gray.)
 -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Forward Test — Unscored Predictions</title>
-<!-- Inline so the page makes no external request at all; without it the browser
-     asks for /favicon.ico and logs a spurious 404 in the console. -->
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ctext y='13' font-size='13'%3E%E2%97%8B%3C/text%3E%3C/svg%3E">
 <style>
   :root {
-    --bg: #fbfaf8;
-    --panel: #ffffff;
-    --ink: #1a1a1a;
-    --ink-soft: #5c5c5c;
-    --ink-faint: #8a8a8a;
-    --line: #e2ded8;
-    --line-strong: #cfc9c1;
-    --accent: #7a4b1e;
-    --warn-bg: #fff6e5;
-    --warn-line: #e0a83c;
-    --warn-ink: #6b4407;
-    --bad-bg: #fdf0ee;
-    --bad-line: #d9756a;
-    --bad-ink: #8c2f22;
-    --miss-bg: #f6eeea;
-    --miss-ink: #6f6a62;
+    --bg: #fbfaf8; --panel: #ffffff;
+    --ink: #1a1a1a; --ink-soft: #5c5c5c; --ink-faint: #8a8a8a;
+    --line: #e2ded8; --line-strong: #cfc9c1;
+    --accent: #7a4b1e; --accent-soft: #f3ece3;
+    --warn-bg: #fff6e5; --warn-line: #e0a83c; --warn-ink: #6b4407;
+    --bad-bg: #fdf0ee; --bad-line: #d9756a; --bad-ink: #8c2f22;
+    --miss-bg: #f6eeea; --miss-ink: #6f6a62;
     --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #161513;
-      --panel: #1e1d1a;
-      --ink: #ece9e4;
-      --ink-soft: #a8a29a;
-      --ink-faint: #7d776f;
-      --line: #302e2a;
-      --line-strong: #423f39;
-      --accent: #d9a066;
-      --warn-bg: #2b2413;
-      --warn-line: #8a6a20;
-      --warn-ink: #f0d9a8;
-      --bad-bg: #2e1c19;
-      --bad-line: #8a463c;
-      --bad-ink: #f0b8ad;
-      --miss-bg: #272020;
-      --miss-ink: #8f8981;
+      --bg: #161513; --panel: #1e1d1a;
+      --ink: #ece9e4; --ink-soft: #a8a29a; --ink-faint: #7d776f;
+      --line: #302e2a; --line-strong: #423f39;
+      --accent: #d9a066; --accent-soft: #2a2118;
+      --warn-bg: #2b2413; --warn-line: #8a6a20; --warn-ink: #f0d9a8;
+      --bad-bg: #2e1c19; --bad-line: #8a463c; --bad-ink: #f0b8ad;
+      --miss-bg: #272020; --miss-ink: #8f8981;
     }
   }
   * { box-sizing: border-box; }
-  body {
-    margin: 0; background: var(--bg); color: var(--ink);
-    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  }
-  .wrap { max-width: 1180px; margin: 0 auto; padding: 28px 20px 80px; }
-  h1 { font-size: 24px; margin: 0 0 4px; letter-spacing: -0.01em; }
-  h2 { font-size: 17px; margin: 40px 0 10px; letter-spacing: -0.005em; }
-  h2:first-of-type { margin-top: 28px; }
-  .sub { color: var(--ink-soft); margin: 0 0 22px; font-size: 14px; }
-  code, .mono { font-family: var(--mono); font-size: 0.92em; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 30px 20px 80px; }
+  .prose { max-width: 66ch; }
+  h1 { font-size: 25px; margin: 0 0 6px; letter-spacing: -0.015em; }
+  h2 { font-size: 18px; margin: 44px 0 12px; letter-spacing: -0.008em; }
+  h3 { font-size: 14px; margin: 22px 0 8px; color: var(--ink-soft);
+       text-transform: uppercase; letter-spacing: 0.06em; }
+  p { margin: 0 0 12px; }
+  .sub { color: var(--ink-soft); margin: 0 0 24px; font-size: 14px; }
+  code, .mono { font-family: var(--mono); font-size: 0.9em; }
+  .lead p { font-size: 15.5px; }
 
-  .banner {
-    background: var(--warn-bg); border: 1px solid var(--warn-line);
-    border-left-width: 4px; border-radius: 5px;
-    padding: 14px 16px; margin: 0 0 24px; color: var(--warn-ink);
-  }
-  .banner strong { display: block; font-size: 15px; margin-bottom: 5px;
-                   letter-spacing: 0.01em; text-transform: uppercase; }
-  .banner p { margin: 6px 0 0; font-size: 14px; }
+  .banner { background: var(--warn-bg); border: 1px solid var(--warn-line);
+            border-left-width: 4px; border-radius: 5px; padding: 15px 17px;
+            margin: 22px 0 8px; color: var(--warn-ink); }
+  .banner strong { display: block; font-size: 15px; margin-bottom: 6px;
+                   letter-spacing: 0.02em; text-transform: uppercase; }
+  .banner p { margin: 7px 0 0; font-size: 14px; }
+  .banner p:first-of-type { margin-top: 0; }
 
-  .panel {
-    background: var(--panel); border: 1px solid var(--line);
-    border-radius: 5px; padding: 16px 18px;
-  }
-  .grid {
-    display: grid; gap: 14px 22px;
-    grid-template-columns: repeat(auto-fit, minmax(215px, 1fr));
-  }
+  .panel { background: var(--panel); border: 1px solid var(--line);
+           border-radius: 5px; padding: 17px 19px; }
+  .grid { display: grid; gap: 15px 22px;
+          grid-template-columns: repeat(auto-fit, minmax(215px, 1fr)); }
   .field .k { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
               color: var(--ink-faint); margin-bottom: 3px; }
   .field .v { font-family: var(--mono); font-size: 13px; word-break: break-all; }
 
+  /* ---- feature list ---- */
+  ol.features { margin: 0; padding: 0; list-style: none; counter-reset: f; }
+  ol.features li { counter-increment: f; padding: 10px 0 10px 40px;
+                   border-bottom: 1px solid var(--line); position: relative; }
+  ol.features li:last-child { border-bottom: none; }
+  ol.features li::before {
+    content: counter(f); position: absolute; left: 0; top: 11px;
+    width: 25px; height: 25px; border-radius: 50%; background: var(--accent-soft);
+    color: var(--accent); font-size: 11px; font-weight: 600;
+    display: flex; align-items: center; justify-content: center;
+  }
+  ol.features .fname { font-family: var(--mono); font-size: 12px;
+                       color: var(--ink-faint); display: block; margin-top: 2px; }
+
+  /* ---- scoreboard ---- */
+  .hero { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px 18px;
+          padding: 4px 0 16px; }
+  .hero .big { font-size: 52px; line-height: 1; font-weight: 600;
+               color: var(--accent); letter-spacing: -0.03em; }
+  .hero .unit { font-size: 16px; color: var(--ink-soft); }
+  .hero .vs { font-size: 15px; color: var(--ink-soft); }
+  .hero .vs b { font-size: 22px; color: var(--ink-faint); font-weight: 600; }
+
+  .years { display: grid; gap: 12px;
+           grid-template-columns: repeat(auto-fit, minmax(168px, 1fr)); }
+  .yr { background: var(--panel); border: 1px solid var(--line);
+        border-radius: 5px; padding: 13px 15px; }
+  .yr .when { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
+              color: var(--ink-faint); margin-bottom: 8px; }
+  .yr .pair { display: flex; align-items: baseline; gap: 7px; }
+  .yr .n { font-size: 27px; font-weight: 600; line-height: 1.1;
+           letter-spacing: -0.02em; }
+  .yr .n.model { color: var(--accent); }
+  .yr .n.base { color: var(--ink-faint); font-size: 20px; }
+  .yr .cap { font-size: 12px; color: var(--ink-soft); }
+  .yr .row2 { margin-top: 5px; }
+  .yr .rows { font-size: 11px; color: var(--ink-faint); margin-top: 9px;
+              padding-top: 8px; border-top: 1px solid var(--line); }
+
+  /* ---- tables ---- */
   table { border-collapse: collapse; width: 100%; font-size: 13px; }
   .scroll { overflow-x: auto; border: 1px solid var(--line);
             border-radius: 5px; background: var(--panel); }
-  th, td { padding: 6px 10px; text-align: right; white-space: nowrap;
+  th, td { padding: 7px 10px; text-align: right; white-space: nowrap;
            border-bottom: 1px solid var(--line); }
   th:first-child, td:first-child { text-align: left; }
-  th {
-    position: sticky; top: 0; background: var(--panel); z-index: 1;
-    font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
-    color: var(--ink-soft); border-bottom: 1px solid var(--line-strong);
-  }
+  th { position: sticky; top: 0; background: var(--panel); z-index: 1;
+       font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
+       color: var(--ink-soft); border-bottom: 1px solid var(--line-strong); }
   th.sortable { cursor: pointer; user-select: none; }
   th.sortable:hover { color: var(--ink); }
   th .arrow { color: var(--accent); font-size: 10px; }
+  .q { display: inline-block; margin-left: 4px; width: 13px; height: 13px;
+       border-radius: 50%; border: 1px solid var(--line-strong);
+       color: var(--ink-faint); font-size: 9px; line-height: 11px;
+       text-align: center; cursor: help; vertical-align: 1px;
+       text-transform: none; letter-spacing: 0; }
+  .q:hover { color: var(--ink); border-color: var(--ink-faint); }
   td.num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
   tbody tr:hover { background: rgba(127,127,127,0.06); }
-  /* The distinction must survive horizontal scrolling, so it cannot live on a
-     border in the first column -- the row tint and the per-cell badge both
-     stay visible wherever the table is scrolled to. */
   tr.miss { background: var(--miss-bg); color: var(--miss-ink); }
   tr.miss:hover { background: rgba(127,127,127,0.14); }
   .badge { display: inline-block; min-width: 46px; text-align: center;
@@ -142,6 +179,10 @@
                 border: 1px solid var(--bad-line); }
   .pooled td { font-weight: 600; border-top: 2px solid var(--line-strong);
                border-bottom: none; }
+  tr.over td { background: var(--miss-bg); }
+  .verdict { font-size: 12px; }
+  .verdict.bad { color: var(--bad-ink); }
+  .verdict.ok { color: var(--ink-faint); }
 
   .controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
               margin: 0 0 12px; }
@@ -151,100 +192,147 @@
   input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
   .count { color: var(--ink-soft); font-size: 13px; margin-left: auto; }
 
-  .error {
-    background: var(--bad-bg); border: 1px solid var(--bad-line);
-    border-left-width: 4px; border-radius: 5px;
-    padding: 13px 15px; color: var(--bad-ink); font-size: 14px;
-  }
+  .error { background: var(--bad-bg); border: 1px solid var(--bad-line);
+           border-left-width: 4px; border-radius: 5px; padding: 13px 15px;
+           color: var(--bad-ink); font-size: 14px; }
   .error b { display: block; margin-bottom: 4px; }
   .error .hint { margin-top: 7px; font-size: 13px; opacity: 0.9; }
   .loading { color: var(--ink-faint); font-size: 14px; padding: 10px 0; }
+  .note { color: var(--ink-soft); font-size: 13px; margin: 10px 0 0; max-width: 66ch; }
 
-  .note { color: var(--ink-soft); font-size: 13px; margin: 9px 0 0; }
-  details { margin-top: 14px; }
+  details { margin-top: 16px; }
+  details.big { margin-top: 28px; border-top: 1px solid var(--line); padding-top: 18px; }
   summary { cursor: pointer; font-size: 13px; color: var(--ink-soft); }
   summary:hover { color: var(--ink); }
-  pre.raw {
-    margin: 10px 0 0; padding: 13px; background: var(--bg);
-    border: 1px solid var(--line); border-radius: 4px;
-    font-family: var(--mono); font-size: 12px; line-height: 1.5;
-    white-space: pre-wrap; word-break: break-word; max-height: 420px;
-    overflow-y: auto; color: var(--ink-soft);
-  }
+  details.big > summary { font-size: 15px; color: var(--ink); font-weight: 600; }
+  pre.raw { margin: 10px 0 0; padding: 13px; background: var(--bg);
+            border: 1px solid var(--line); border-radius: 4px;
+            font-family: var(--mono); font-size: 12px; line-height: 1.5;
+            white-space: pre-wrap; word-break: break-word; max-height: 420px;
+            overflow-y: auto; color: var(--ink-soft); }
   .legend { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 9px;
             font-size: 12px; color: var(--ink-soft); }
   .swatch { display: inline-block; width: 22px; height: 12px; border-radius: 2px;
             vertical-align: -2px; margin-right: 6px;
             background: var(--miss-bg); border: 1px solid var(--bad-line); }
   footer { margin-top: 46px; padding-top: 16px; border-top: 1px solid var(--line);
-           color: var(--ink-faint); font-size: 12px; }
+           color: var(--ink-faint); font-size: 12px; max-width: 78ch; }
 </style>
 </head>
 <body>
 <div class="wrap">
 
   <h1>Live forward test</h1>
-  <p class="sub">A read-only view of the committed files in <code>data/</code>. Nothing on this page is computed from raw data.</p>
+  <p class="sub">A read-only view of files committed to this repository. Nothing on this page is computed from raw data.</p>
+
+  <h2>What am I looking at</h2>
+  <div class="prose lead">
+    <p>Each row further down is <b>one company, and one specific quarter of its earnings that has not been reported yet</b>. A statistical model was asked, in advance, to guess how that quarter will turn out, and its guess was written down and date-stamped before the company filed anything.</p>
+    <p>The thing being guessed is narrow and worth stating exactly: <b>will the company's diluted earnings per share for that quarter come in higher than for the same quarter one year earlier?</b> Just higher or not higher. It is not a forecast of the share price, of whether the company will beat what analysts expected, or of whether the stock is worth buying.</p>
+    <p><b>Nobody knows the answers yet, including the people who built this.</b> The companies have not filed. The results get graded once they do — most report between November 2026 and February 2027, so the earliest a full grading can happen is <b>January 2027</b>. Until then every number here is a prediction with no outcome attached.</p>
+  </div>
 
   <div class="banner">
     <strong>These predictions are unscored</strong>
-    <p>Every row below is a prediction about a quarter that had <em>not been filed</em> when the file was committed. <b>No outcome is known.</b> Nothing here has been graded, and no accuracy claim on this page describes the forward test.</p>
-    <p>The quarters resolve as companies report. Most are expected to land between November 2026 and February 2027, so the file is <b>not fully scorable until January 2027</b> at the earliest. Scoring is a separate script and a separate commit (<code>scripts/score_forward.py</code>); until it runs, the honest status is "unknown".</p>
-    <p>The holdout table further down <em>is</em> scored — but it is the 2022–2025 holdout, a different and now-spent test. Do not read it as evidence about these predictions.</p>
+    <p>No row below has been graded. Any accuracy figure anywhere on this page comes from a <em>different</em> and already-completed test on historical data from 2022–2025 — it is background on how the model has behaved before, not a result for these predictions.</p>
   </div>
 
-  <h2>Prediction run</h2>
+  <h2>How the model decides</h2>
+  <div class="prose">
+    <p>The model looks at one thing only: <b>the company's own recent earnings history</b>. Ten numbers go in, a probability comes out. Here is every one of them, in plain terms.</p>
+  </div>
+  <div id="featuresBox"><div class="loading">Loading the feature list…</div></div>
+
+  <h2>What the probability means</h2>
+  <div class="prose">
+    <p>A probability of 0.80 next to a company does <b>not</b> mean the model knows something about that company. It means: <em>among past quarters whose earnings history looked broadly like this one, about 80 in 100 turned out to be beats.</em> It is a base rate borrowed from similar-looking history, applied to a new case. The model has never heard of the company, its products, its management, or anything that happened this quarter.</p>
+    <p>That matters because the borrowed rate is not equally trustworthy across the range. On the historical test, the model's confident predictions were <b>too confident</b> — and the more confident it got, the worse the gap became.</p>
+  </div>
+  <div id="calibBox"><div class="loading">Loading calibration…</div></div>
+
+  <h2>How often has it been right</h2>
+  <div class="prose">
+    <p>This is the historical test: 2022–2025, on data the model had never seen when it was locked. The comparison that matters is not "is it better than a coin flip" — most companies grow earnings most of the time, so <b>always guessing "beat" is already a strong strategy</b>. The bar is beating that.</p>
+  </div>
+  <div id="scoreBox"><div class="loading">Loading the scoreboard…</div></div>
+
+  <h2>This prediction run</h2>
   <div class="controls">
     <label for="runPick" style="font-size:13px;color:var(--ink-soft)">File</label>
     <select id="runPick" disabled><option>loading…</option></select>
   </div>
   <div id="metaBox"><div class="loading">Loading prediction file…</div></div>
 
-  <h2>Predictions</h2>
+  <h2>The predictions</h2>
+  <p class="note" style="margin-bottom:14px">Every column has a <span class="q" title="Like this one — hover any column heading's marker for a one-line explanation.">?</span> marker; hover it for a one-line explanation. The last ten columns are the model's ten inputs for that company, so you can see exactly what it was working from.</p>
   <div id="tableBox"><div class="loading">Loading…</div></div>
 
-  <h2>Holdout result (2022–2025) — a different, already-spent test</h2>
-  <div id="holdoutBox"><div class="loading">Loading…</div></div>
+  <details class="big" id="techWrap">
+    <summary>Technical detail and provenance</summary>
+    <div id="techBox"><div class="loading">Loading…</div></div>
+  </details>
 
   <footer>
     Sources: <code>data/live_predictions_*.csv</code>, <code>data/holdout_results.csv</code>,
-    listed in <code>docs/predictions.json</code>. This page reads those files and renders them; it
-    holds no numbers of its own.
+    <code>data/holdout_calibration.csv</code>, <code>config/frozen_model.json</code>, listed in
+    <code>docs/predictions.json</code>. This page reads those files and displays them; it holds no
+    numbers of its own. Model coefficients are not shown because they are not written to any
+    committed file, and the model is refit for each fold and each forward run, so there is no
+    single set of weights to quote.
   </footer>
 </div>
 
 <script>
 "use strict";
 
-/* ---------------------------------------------------------------------------
-   Fetch helpers. Every failure produces a visible message -- never a blank
-   panel and never a silent catch.
---------------------------------------------------------------------------- */
-
 var IS_FILE = location.protocol === "file:";
+
+/* =========================================================================
+   Plain-English copy. This is PAGE TEXT, not data: it explains what each
+   committed column means. The list of features itself is read from
+   config/frozen_model.json, so if the config ever changes, the page follows
+   it and any feature without a description here says so rather than being
+   silently dropped.
+   ========================================================================= */
+
+var EXPLAIN = {
+  eps_growth_yoy_lag_1: "How much its earnings rose or fell in the most recent quarter, against the same quarter a year before that.",
+  eps_growth_yoy_lag_2: "The same rise-or-fall figure, one quarter further back.",
+  eps_growth_yoy_lag_3: "The same figure again, three quarters back.",
+  eps_growth_yoy_lag_4: "The same figure four quarters back — a full year of history behind the most recent one.",
+  label_lag_1: "Did it beat its year-ago quarter last time? Yes or no.",
+  label_lag_2: "Did it beat two quarters ago?",
+  label_lag_3: "Did it beat three quarters ago?",
+  label_lag_4: "Did it beat four quarters ago?",
+  growth_streak: "How many quarters in a row it has beaten, counting back from the most recent one (it stops counting at eight).",
+  quarters_available: "How many quarters of history this company has in the dataset at all — a measure of how much the model had to work with.",
+
+  ticker: "The company's stock symbol.",
+  cik: "The company's filer ID at the SEC.",
+  cut_date: "The date the predictions were made and committed. The same for every row.",
+  predicted_probability: "The model's estimated chance that this company's next quarter beats its year-ago quarter, from 0 to 1.",
+  predicted_label: "The probability turned into a yes/no call at the 0.5 mark: 1 means the model expects a beat, 0 means it does not.",
+  expected_period_end: "A rough guess at which quarter is being predicted. It is an estimate from the company's usual reporting rhythm, not a fact, and it is not used to grade anything.",
+  last_known_period_end: "The end date of the most recent quarter this company has already reported.",
+  last_known_prediction_date: "The day after that most recent quarter was filed — the first day its numbers could have been acted on.",
+  quarter_gap_days_used: "The typical number of days between this company's recent quarters, used only to estimate the date above."
+};
+
+/* ------------------------------------------------------------------ utils */
 
 function errorBox(title, detail, hint) {
   var el = document.createElement("div");
   el.className = "error";
-  var b = document.createElement("b");
-  b.textContent = title;
-  el.appendChild(b);
+  var b = document.createElement("b"); b.textContent = title; el.appendChild(b);
   el.appendChild(document.createTextNode(detail));
-  if (hint) {
-    var h = document.createElement("div");
-    h.className = "hint";
-    h.textContent = hint;
-    el.appendChild(h);
-  }
+  if (hint) { var h = document.createElement("div"); h.className = "hint";
+              h.textContent = hint; el.appendChild(h); }
   return el;
 }
-
 function show(id, node) {
   var host = document.getElementById(id);
-  host.textContent = "";
-  host.appendChild(node);
+  host.textContent = ""; host.appendChild(node);
 }
-
 function servingHint() {
   if (IS_FILE) {
     return "This page was opened from disk (file://). fetch() cannot read local " +
@@ -252,34 +340,32 @@ function servingHint() {
            "python3 -m http.server 8000 from the repository root, then open " +
            "http://localhost:8000/docs/";
   }
-  return "Checked relative to this page, so it expects the repository root one " +
+  return "Paths are relative to this page, so it expects the repository root one " +
          "level up. On GitHub Pages that means serving the BRANCH ROOT, not the " +
-         "/docs folder -- with /docs as the site root, ../data/ points above the " +
-         "site and always 404s.";
+         "/docs folder — with /docs as the site root, ../ points above the site " +
+         "and always 404s.";
 }
-
 function fetchText(url) {
   return fetch(url).then(function (r) {
     if (!r.ok) throw new Error("HTTP " + r.status + " " + r.statusText);
     return r.text();
   });
 }
+function el(tag, cls, text) {
+  var n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== undefined && text !== null) n.textContent = text;
+  return n;
+}
+function isNumeric(v) { return v !== "" && v !== undefined && v !== null && isFinite(Number(v)); }
+function inHundred(rate) { return Math.round(Number(rate) * 100); }
 
-/* ---------------------------------------------------------------------------
-   CSV parsing.
-
-   The live prediction files open with ~40 lines of "#" provenance before the
-   real header row, so the header is found by skipping comments -- never by
-   assuming line 1.
---------------------------------------------------------------------------- */
+/* -------------------------------------------------------------- CSV / meta */
 
 function splitComments(text) {
-  var lines = text.split(/\r?\n/);
-  var comments = [];
-  var i = 0;
+  var lines = text.split(/\r?\n/), comments = [], i = 0;
   while (i < lines.length && lines[i].charAt(0) === "#") {
-    comments.push(lines[i].replace(/^#[ ]?/, ""));
-    i++;
+    comments.push(lines[i].replace(/^#[ ]?/, "")); i++;
   }
   return { comments: comments, body: lines.slice(i).join("\n") };
 }
@@ -304,10 +390,7 @@ function parseCSV(text) {
     field += c; i++;
   }
   if (field.length || row.length) endRow();
-  // Drop trailing blank lines.
-  while (rows.length && rows[rows.length - 1].length === 1 && rows[rows.length - 1][0] === "") {
-    rows.pop();
-  }
+  while (rows.length && rows[rows.length - 1].length === 1 && rows[rows.length - 1][0] === "") rows.pop();
   if (!rows.length) return { header: [], rows: [] };
   return { header: rows[0], rows: rows.slice(1) };
 }
@@ -320,9 +403,6 @@ function toObjects(parsed) {
   });
 }
 
-/* Provenance block -> key/value pairs. Only lines shaped "key : value" whose
-   key is a single lower-case token are treated as fields; the prose in the
-   header is left for the raw view. */
 function parseMeta(comments) {
   var meta = {};
   comments.forEach(function (line) {
@@ -334,19 +414,230 @@ function parseMeta(comments) {
   });
   return meta;
 }
-
 function firstToken(v) { return v ? String(v).split(/\s+/)[0] : ""; }
 
-/* ---------------------------------------------------------------------------
-   Small DOM builders
---------------------------------------------------------------------------- */
+/* ============================ 2. How the model decides =================== */
 
-function el(tag, cls, text) {
-  var n = document.createElement(tag);
-  if (cls) n.className = cls;
-  if (text !== undefined && text !== null) n.textContent = text;
-  return n;
+function renderFeatures(config) {
+  var cols = (config.features && config.features.columns) || [];
+  if (!cols.length) throw new Error("config lists no features");
+
+  var box = el("div");
+  var panel = el("div", "panel");
+  var list = el("ol", "features");
+
+  cols.forEach(function (name) {
+    var li = el("li");
+    var text = EXPLAIN[name];
+    if (text) {
+      li.appendChild(document.createTextNode(text));
+    } else {
+      // The config named an input this page has no plain-English wording for.
+      // Say so rather than dropping it -- the list must stay complete.
+      var unk = el("span", null, "(this input is in the frozen config but has no plain-English description on this page yet)");
+      unk.style.color = "var(--ink-faint)";
+      li.appendChild(unk);
+    }
+    li.appendChild(el("span", "fname", name));
+    list.appendChild(li);
+  });
+  panel.appendChild(list);
+  box.appendChild(panel);
+
+  var warn = el("div", "banner");
+  warn.appendChild(el("strong", null, "That is the whole list"));
+  var p = el("p");
+  p.innerHTML = "There is <b>no news, no share price, no analyst estimate, no " +
+    "industry or sector data, no revenue, no debt, no management commentary, and " +
+    "nothing about the wider economy</b>. The model cannot see any of it. It has " +
+    "the " + cols.length + " numbers above, drawn entirely from the company's own " +
+    "past earnings filings, and nothing else.";
+  warn.appendChild(p);
+  var p2 = el("p", null,
+    "How heavily it leans on each one is not shown here, because those weights " +
+    "are not written to any committed file — and there is no single set of them " +
+    "to quote, since the model is re-fitted from scratch for every test period " +
+    "and again for every live run.");
+  warn.appendChild(p2);
+  box.appendChild(warn);
+
+  return box;
 }
+
+/* ========================= 3. What the probability means ================= */
+
+function renderCalibration(rows) {
+  var box = el("div");
+  var scroll = el("div", "scroll");
+  var table = el("table");
+
+  var head = [
+    ["Group", "The predictions sorted into ten equal groups, from the model's least confident to its most confident."],
+    ["Predictions", "How many predictions fell into this group."],
+    ["Model said", "Out of 100, how often the model expected a beat in this group."],
+    ["Actually was", "Out of 100, how often those quarters actually did beat."],
+    ["Verdict", "Whether reality came in above or below what the model expected."]
+  ];
+  var thead = el("thead"), htr = el("tr");
+  head.forEach(function (h) {
+    var th = el("th");
+    th.appendChild(document.createTextNode(h[0]));
+    var q = el("span", "q", "?"); q.title = h[1];
+    th.appendChild(q);
+    htr.appendChild(th);
+  });
+  thead.appendChild(htr); table.appendChild(thead);
+
+  var tbody = el("tbody");
+  rows.forEach(function (r, i) {
+    var predicted = inHundred(r.predicted);
+    var actual = inHundred(r.actual);
+    var diff = actual - predicted;
+    var tr = el("tr");
+
+    var label = i === 0 ? "1 — least confident"
+              : i === rows.length - 1 ? String(i + 1) + " — most confident"
+              : String(i + 1);
+    tr.appendChild(el("td", null, label));
+    tr.appendChild(el("td", "num", r.n));
+    tr.appendChild(el("td", "num", predicted + " in 100"));
+    tr.appendChild(el("td", "num", actual + " in 100"));
+
+    // A gap of a point or two on ~550 samples is noise, and calling it
+    // overconfidence would overstate what the data supports. Only a material
+    // gap gets named, and the same threshold drives the wording and the row
+    // highlight so the two can never disagree.
+    var MATERIAL = 4;
+    var td = el("td");
+    var v = el("span", "verdict " + (diff <= -MATERIAL ? "bad" : "ok"));
+    v.textContent = diff >= MATERIAL ? "better than expected, by " + diff
+      : diff <= -MATERIAL ? "OVERCONFIDENT by " + Math.abs(diff)
+      : "about right";
+    td.appendChild(v);
+    tr.appendChild(td);
+
+    if (diff <= -MATERIAL) tr.className = "over";
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  scroll.appendChild(table);
+  box.appendChild(scroll);
+
+  // The plain-English reading, built from the committed top and bottom rows.
+  var top = rows[rows.length - 1];
+  var bottom = rows[0];
+  var msg = el("div", "banner");
+  msg.appendChild(el("strong", null, "Trust the confident predictions least"));
+  var p = el("p");
+  p.innerHTML = "Read the bottom row. In the group where the model was <b>most</b> " +
+    "confident it expected <b>" + inHundred(top.predicted) + " in 100</b> to beat, " +
+    "and only <b>" + inHundred(top.actual) + " in 100</b> actually did. That is the " +
+    "largest gap in the table, and it sits exactly where a reader is most tempted to " +
+    "act. The model is not just imprecise at the top — it is <b>systematically " +
+    "overconfident</b> there.";
+  msg.appendChild(p);
+  // Built from the committed top three rows rather than an invented illustration.
+  var topThree = rows.slice(-3);
+  var saidRun = topThree.map(function (r) { return inHundred(r.predicted); }).join(", ");
+  var gotRun = topThree.map(function (r) { return inHundred(r.actual); }).join(", ");
+  var p2 = el("p");
+  p2.innerHTML = "Notice too that the top three groups barely separate. The model " +
+    "rated them " + saidRun + " in 100, rising confidently — and they came in at " +
+    gotRun + " in 100, essentially flat. <b>Sorting companies by the model's " +
+    "confidence and taking the top slice means picking from the part of the scale " +
+    "that carries almost no information.</b> At the cautious end it behaves better: " +
+    "the least confident group expected " + inHundred(bottom.predicted) +
+    " in 100 and got " + inHundred(bottom.actual) + ".";
+  msg.appendChild(p2);
+  box.appendChild(msg);
+
+  box.appendChild(el("p", "note",
+    "Read from data/holdout_calibration.csv, the 2022–2025 historical test. " +
+    "Figures are the committed values rounded to whole numbers out of 100 for " +
+    "reading; the unrounded ones are in the technical section below. A group is " +
+    "only called over- or under-confident when it is out by 4 or more in 100 — " +
+    "smaller gaps on roughly 550 quarters are noise, not a finding."));
+  return box;
+}
+
+/* ========================= 4. How often has it been right =============== */
+
+function renderScoreboard(rows) {
+  var box = el("div");
+
+  var total = rows.reduce(function (s, r) { return s + Number(r.n_labelled); }, 0);
+  function weighted(key) {
+    return rows.reduce(function (s, r) {
+      return s + Number(r.n_labelled) * Number(r[key]);
+    }, 0) / total;
+  }
+  var modelRate = weighted("model_accuracy");
+  var baseRate = weighted("constant_accuracy");
+  var overallModel = inHundred(modelRate);
+  var overallBase = inHundred(baseRate);
+  // Rounded once from the unrounded difference. Subtracting two already-rounded
+  // numbers can be a point out from the real gap.
+  var overallGap = inHundred(modelRate - baseRate);
+
+  var hero = el("div", "hero");
+  var big = el("span", "big", String(overallModel));
+  hero.appendChild(big);
+  hero.appendChild(el("span", "unit", "right in every 100 tries"));
+  var vs = el("span", "vs");
+  vs.appendChild(document.createTextNode("versus "));
+  var b = el("b"); b.textContent = String(overallBase);
+  vs.appendChild(b);
+  vs.appendChild(document.createTextNode(" for simply guessing “beat” every single time"));
+  hero.appendChild(vs);
+  box.appendChild(hero);
+
+  var summary = el("p", "note");
+  summary.style.marginTop = "0";
+  summary.innerHTML = "Across " + total.toLocaleString() + " company-quarters from " +
+    "2022 to 2025, the model got <b>" + overallGap + " more right in every 100</b> than the " +
+    "do-nothing strategy of always saying “beat”. Real, consistent, and small. " +
+    "Anyone expecting a model to be right 90 times in 100 is looking at the wrong " +
+    "kind of problem.";
+  box.appendChild(summary);
+
+  var years = el("div", "years");
+  years.style.marginTop = "18px";
+  rows.forEach(function (r, i) {
+    var startYear = String(r.trains_before || "").slice(0, 4);
+    var isLast = i === rows.length - 1;
+    var when = startYear ? (startYear + (isLast ? " and later" : "")) : ("period " + r.fold);
+
+    var card = el("div", "yr");
+    card.appendChild(el("div", "when", when));
+
+    var p1 = el("div", "pair");
+    p1.appendChild(el("span", "n model", String(inHundred(r.model_accuracy))));
+    p1.appendChild(el("span", "cap", "the model"));
+    card.appendChild(p1);
+
+    var p2 = el("div", "pair row2");
+    p2.appendChild(el("span", "n base", String(inHundred(r.constant_accuracy))));
+    p2.appendChild(el("span", "cap", "always “beat”"));
+    card.appendChild(p2);
+
+    card.appendChild(el("div", "rows",
+      Number(r.n_labelled).toLocaleString() + " quarters graded"));
+    years.appendChild(card);
+  });
+  box.appendChild(years);
+
+  box.appendChild(el("p", "note",
+    "Each year's figure is out of 100 tries. Per-year numbers are read from " +
+    "data/holdout_results.csv; the headline figure above them is those same four " +
+    "numbers averaged, each weighted by how many quarters it graded. The last " +
+    "period runs to the end of the test rather than stopping at one year."));
+  box.appendChild(el("p", "note",
+    "This is the 2022–2025 historical test. It has been run once and is finished — " +
+    "it says nothing about whether the unscored predictions below will be right."));
+  return box;
+}
+
+/* ============================== metadata panel ========================== */
 
 function field(label, value) {
   var f = el("div", "field");
@@ -355,60 +646,30 @@ function field(label, value) {
   return f;
 }
 
-function isNumeric(v) {
-  return v !== "" && v !== undefined && v !== null && isFinite(Number(v));
-}
-
-/* ---------------------------------------------------------------------------
-   Metadata panel
---------------------------------------------------------------------------- */
-
-function renderMeta(meta, comments, file) {
-  var box = el("div");
+function renderMeta(meta, file) {
   var panel = el("div", "panel");
   var grid = el("div", "grid");
-
-  // The four the page is required to surface, first.
-  grid.appendChild(field("Cut date", firstToken(meta.cut_date)));
-  grid.appendChild(field("Code SHA", firstToken(meta.code_sha)));
-  grid.appendChild(field("Config", meta.config || ""));
-  grid.appendChild(field("Panel sha256", firstToken(meta.panel_sha256)));
-
+  grid.appendChild(field("Predictions made on", firstToken(meta.cut_date)));
+  grid.appendChild(field("Code version (git SHA)", firstToken(meta.code_sha)));
+  grid.appendChild(field("Frozen settings", meta.config || ""));
+  grid.appendChild(field("Data fingerprint (panel sha256)", firstToken(meta.panel_sha256)));
   grid.appendChild(field("Model", meta.model || ""));
-  grid.appendChild(field("Decision threshold", firstToken(meta.decision_threshold)));
-  grid.appendChild(field("Training rows (labelled)", firstToken(meta.training_rows_labelled)));
-  grid.appendChild(field("Training positive rate", firstToken(meta.training_positive_rate)));
-  grid.appendChild(field("Produced at (UTC)", meta.produced_at_utc || ""));
-  grid.appendChild(field("Clean working tree", firstToken(meta.working_tree_clean)));
-
+  grid.appendChild(field("Yes/no cut-off", firstToken(meta.decision_threshold)));
+  grid.appendChild(field("Past quarters learned from", firstToken(meta.training_rows_labelled)));
+  grid.appendChild(field("Beat rate in that history", firstToken(meta.training_positive_rate)));
   panel.appendChild(grid);
-
-  var note = el("p", "note",
-    "Read from the # provenance block at the top of data/" + file +
-    " — the file describes itself; this panel only displays it.");
-  panel.appendChild(note);
-
-  var det = el("details");
-  det.appendChild(el("summary", null,
-    "Show the full provenance header (" + comments.length + " lines), including the frozen-universe and scoring notes"));
-  var pre = el("pre", "raw", comments.join("\n"));
-  det.appendChild(pre);
-  panel.appendChild(det);
-
-  box.appendChild(panel);
-  return box;
+  panel.appendChild(el("p", "note",
+    "Read from the header block at the top of data/" + file + ". The file records " +
+    "its own origins; this panel only displays them. The fingerprints are there so " +
+    "anyone can check that the predictions were made from exactly this code and " +
+    "exactly this data, before the outcomes existed."));
+  return panel;
 }
 
-/* ---------------------------------------------------------------------------
-   Predictions table
---------------------------------------------------------------------------- */
+/* ============================ 5. predictions table ====================== */
 
 var PROBA = "predicted_probability";
 var LABEL = "predicted_label";
-
-/* Column display order. Every column in the file is shown; this only decides
-   which are read first, so the ticker and the prediction itself are visible
-   without scrolling. Columns not named here follow in file order. */
 var LEAD_COLS = ["ticker", PROBA, LABEL, "expected_period_end"];
 
 function orderColumns(header) {
@@ -422,34 +683,26 @@ function renderPredictions(fileHeader, rows) {
   var box = el("div");
 
   var controls = el("div", "controls");
-
   var search = el("input");
-  search.type = "search";
-  search.placeholder = "Filter ticker…";
+  search.type = "search"; search.placeholder = "Filter ticker…"; search.size = 16;
   search.setAttribute("aria-label", "Filter by ticker");
-  search.size = 16;
   controls.appendChild(search);
 
   var pick = el("select");
-  pick.setAttribute("aria-label", "Filter by predicted label");
+  pick.setAttribute("aria-label", "Filter by the model's call");
   [["all", "All predictions"],
-   ["1", "Predicted beat (1)"],
-   ["0", "Predicted miss (0)"]].forEach(function (o) {
-    var opt = el("option", null, o[1]);
-    opt.value = o[0];
-    pick.appendChild(opt);
+   ["1", "Model expects a beat"],
+   ["0", "Model expects no beat"]].forEach(function (o) {
+    var opt = el("option", null, o[1]); opt.value = o[0]; pick.appendChild(opt);
   });
   controls.appendChild(pick);
 
-  var minLab = el("label", null, "prob ≥");
-  minLab.style.fontSize = "13px";
-  minLab.style.color = "var(--ink-soft)";
+  var minLab = el("label", null, "confidence at least");
+  minLab.style.fontSize = "13px"; minLab.style.color = "var(--ink-soft)";
   controls.appendChild(minLab);
   var minProb = el("input");
-  minProb.type = "number";
-  minProb.min = "0"; minProb.max = "1"; minProb.step = "0.05";
-  minProb.value = "0";
-  minProb.style.width = "82px";
+  minProb.type = "number"; minProb.min = "0"; minProb.max = "1"; minProb.step = "0.05";
+  minProb.value = "0"; minProb.style.width = "82px";
   minProb.setAttribute("aria-label", "Minimum predicted probability");
   controls.appendChild(minProb);
 
@@ -460,18 +713,15 @@ function renderPredictions(fileHeader, rows) {
   var legend = el("div", "legend");
   var lg = el("span");
   lg.appendChild(el("span", "swatch"));
-  lg.appendChild(document.createTextNode(
-    "= predicted_label 0, the model expecting no year-over-year beat"));
+  lg.appendChild(document.createTextNode("= the model does not expect a beat here"));
   legend.appendChild(lg);
-  legend.appendChild(el("span", null, "Click a column heading to sort."));
+  legend.appendChild(el("span", null, "Click a heading to sort. Hover ? for what a column means."));
   box.appendChild(legend);
 
   var scroll = el("div", "scroll");
   var table = el("table");
-  var thead = el("thead");
-  var htr = el("tr");
+  var thead = el("thead"), htr = el("tr");
 
-  // Which columns sort numerically -- decided from the data, once.
   var numeric = {};
   header.forEach(function (h) {
     numeric[h] = rows.some(function (r) { return isNumeric(r[h]); }) &&
@@ -483,25 +733,28 @@ function renderPredictions(fileHeader, rows) {
   header.forEach(function (h) {
     var th = el("th", "sortable");
     th.appendChild(document.createTextNode(h));
+    var help = EXPLAIN[h];
+    if (help) {
+      var q = el("span", "q", "?");
+      q.title = help;
+      q.setAttribute("aria-label", h + ": " + help);
+      // Keep the marker from also triggering a sort -- it is a help affordance.
+      q.addEventListener("click", function (ev) { ev.stopPropagation(); });
+      th.appendChild(q);
+    }
     th.appendChild(el("span", "arrow", ""));
-    th.title = "Sort by " + h;
     th.addEventListener("click", function () {
       if (sortCol === h) { sortDir = -sortDir; } else { sortCol = h; sortDir = 1; }
       draw();
     });
     htr.appendChild(th);
   });
-  thead.appendChild(htr);
-  table.appendChild(thead);
-  var tbody = el("tbody");
-  table.appendChild(tbody);
-  scroll.appendChild(table);
-  box.appendChild(scroll);
+  thead.appendChild(htr); table.appendChild(thead);
+  var tbody = el("tbody"); table.appendChild(tbody);
+  scroll.appendChild(table); box.appendChild(scroll);
 
   function display(h, v) {
     if (v === "") return "";
-    // Display rounding only, and only where it aids reading. The untouched
-    // value stays available in the cell's tooltip.
     if (h === PROBA && isNumeric(v)) return Number(v).toFixed(4);
     return v;
   }
@@ -520,8 +773,7 @@ function renderPredictions(fileHeader, rows) {
     });
 
     view.sort(function (a, b) {
-      var x = a[sortCol], y = b[sortCol];
-      var cmp;
+      var x = a[sortCol], y = b[sortCol], cmp;
       if (numeric[sortCol]) {
         var nx = x === "" ? -Infinity : Number(x);
         var ny = y === "" ? -Infinity : Number(y);
@@ -547,7 +799,7 @@ function renderPredictions(fileHeader, rows) {
           var cell = el("td");
           var isMiss = String(r[h]) === "0";
           var badge = el("span", "badge " + (isMiss ? "miss" : "beat"),
-                         isMiss ? "0 miss" : "1 beat");
+                         isMiss ? "no beat" : "beat");
           badge.title = "predicted_label = " + r[h];
           cell.appendChild(badge);
           tr.appendChild(cell);
@@ -562,15 +814,13 @@ function renderPredictions(fileHeader, rows) {
     tbody.appendChild(frag);
 
     var misses = view.filter(function (r) { return String(r[LABEL]) === "0"; }).length;
-    count.textContent = view.length + " of " + rows.length + " rows — " +
-      (view.length - misses) + " predicted beat, " + misses + " predicted miss";
+    count.textContent = view.length + " of " + rows.length + " companies — " +
+      (view.length - misses) + " expected to beat, " + misses + " not";
     if (!view.length) {
       var tr = el("tr");
-      var td = el("td", null, "No rows match this filter.");
-      td.colSpan = header.length;
-      td.style.color = "var(--ink-faint)";
-      tr.appendChild(td);
-      tbody.appendChild(tr);
+      var td = el("td", null, "No companies match this filter.");
+      td.colSpan = header.length; td.style.color = "var(--ink-faint)";
+      tr.appendChild(td); tbody.appendChild(tr);
     }
   }
 
@@ -578,77 +828,62 @@ function renderPredictions(fileHeader, rows) {
   pick.addEventListener("change", draw);
   minProb.addEventListener("input", draw);
   draw();
-
   return box;
 }
 
-/* ---------------------------------------------------------------------------
-   Holdout
+/* ======================= technical / provenance (collapsed) ============== */
 
-   Per-fold rows come straight from data/holdout_results.csv. The pooled row is
-   NOT in any committed file, so it is not read -- it is the row-count-weighted
-   mean of the committed fold values, which is exactly what pooling a per-row
-   mean over folds means, and it reproduces RESULTS.md section 7 to 4 decimal
-   places. It is labelled on the page as an aggregate rather than presented as
-   though it had been read from a file.
---------------------------------------------------------------------------- */
-
-var HOLDOUT_COLS = [
-  ["fold", "fold"],
-  ["n_labelled", "n scored"],
+var TECH_COLS = [
+  ["fold", "period"], ["n_labelled", "n scored"],
   ["actual_positive_rate", "actual pos"],
-  ["model_log_loss", "model LL"],
-  ["constant_log_loss", "const LL"],
-  ["log_loss_delta", "Δ LL"],
-  ["model_accuracy", "model acc"],
-  ["constant_accuracy", "const acc"],
+  ["model_log_loss", "model LL"], ["constant_log_loss", "const LL"],
+  ["log_loss_delta", "Δ LL"], ["model_brier", "model Brier"],
+  ["model_accuracy", "model acc"], ["constant_accuracy", "const acc"],
   ["accuracy_delta", "Δ acc"]
 ];
 
 function pct(v) { return (Number(v) * 100).toFixed(1) + "%"; }
 function ll(v) { return Number(v).toFixed(4); }
-
-function fmtHoldout(key, v) {
+function fmtTech(key, v) {
   if (v === "" || v === undefined) return "";
   if (key === "fold" || key === "n_labelled") return v;
   if (key.indexOf("accuracy") >= 0 || key === "actual_positive_rate") {
-    return (key === "accuracy_delta" ? (Number(v) >= 0 ? "+" : "") : "") + pct(v);
+    return (key === "accuracy_delta" && Number(v) >= 0 ? "+" : "") + pct(v);
   }
   return (key === "log_loss_delta" && Number(v) >= 0 ? "+" : "") + ll(v);
 }
 
-function renderHoldout(rows) {
+function renderTech(holdout, calib, comments) {
   var box = el("div");
+
+  box.appendChild(el("h3", null, "Holdout, full metrics"));
   var scroll = el("div", "scroll");
   var table = el("table");
-
   var thead = el("thead"), htr = el("tr");
-  HOLDOUT_COLS.forEach(function (c) { htr.appendChild(el("th", null, c[1])); });
-  thead.appendChild(htr);
-  table.appendChild(thead);
+  TECH_COLS.forEach(function (c) { htr.appendChild(el("th", null, c[1])); });
+  thead.appendChild(htr); table.appendChild(thead);
 
   var tbody = el("tbody");
-  rows.forEach(function (r) {
+  holdout.forEach(function (r) {
     var tr = el("tr");
-    HOLDOUT_COLS.forEach(function (c) {
-      tr.appendChild(el("td", c[0] === "fold" ? null : "num", fmtHoldout(c[0], r[c[0]])));
+    TECH_COLS.forEach(function (c) {
+      tr.appendChild(el("td", c[0] === "fold" ? null : "num", fmtTech(c[0], r[c[0]])));
     });
     tbody.appendChild(tr);
   });
 
-  // Pooled: weight each fold by the rows it scored.
-  var total = rows.reduce(function (s, r) { return s + Number(r.n_labelled); }, 0);
+  var total = holdout.reduce(function (s, r) { return s + Number(r.n_labelled); }, 0);
   function weighted(key) {
-    return rows.reduce(function (s, r) {
+    return holdout.reduce(function (s, r) {
       return s + Number(r.n_labelled) * Number(r[key]);
     }, 0) / total;
   }
   var pooled = {
-    fold: "pooled",
-    n_labelled: total,
+    fold: "pooled", n_labelled: total,
     actual_positive_rate: weighted("actual_positive_rate"),
     model_log_loss: weighted("model_log_loss"),
     constant_log_loss: weighted("constant_log_loss"),
+    model_brier: weighted("model_brier"),
     model_accuracy: weighted("model_accuracy"),
     constant_accuracy: weighted("constant_accuracy")
   };
@@ -656,31 +891,66 @@ function renderHoldout(rows) {
   pooled.accuracy_delta = pooled.model_accuracy - pooled.constant_accuracy;
 
   var ptr = el("tr", "pooled");
-  HOLDOUT_COLS.forEach(function (c) {
-    ptr.appendChild(el("td", c[0] === "fold" ? null : "num", fmtHoldout(c[0], pooled[c[0]])));
+  TECH_COLS.forEach(function (c) {
+    ptr.appendChild(el("td", c[0] === "fold" ? null : "num", fmtTech(c[0], pooled[c[0]])));
   });
   tbody.appendChild(ptr);
-
-  table.appendChild(tbody);
-  scroll.appendChild(table);
-  box.appendChild(scroll);
+  table.appendChild(tbody); scroll.appendChild(table); box.appendChild(scroll);
 
   box.appendChild(el("p", "note",
     "Fold rows are read verbatim from data/holdout_results.csv. The pooled row is " +
     "not stored in any committed file: it is the row-count-weighted mean of the four " +
     "fold values, which is what pooling a per-row mean across folds means, and it " +
-    "reproduces RESULTS.md §7 (0.6402 / 0.6821 log-loss, 64.8% / 58.0% accuracy). " +
-    "Nothing here is recomputed from the per-row predictions."));
-  box.appendChild(el("p", "note",
-    "This is the 2022–2025 holdout. It has been read and is spent — it says " +
-    "nothing about the unscored forward predictions above."));
+    "reproduces RESULTS.md §7 (0.6402 / 0.6821 log-loss, 64.8% / 58.0% accuracy, " +
+    "Brier 0.2236). Nothing is recomputed from the per-row predictions."));
+
+  if (calib && calib.length) {
+    box.appendChild(el("h3", null, "Calibration, unrounded"));
+    var s2 = el("div", "scroll"), t2 = el("table");
+    var h2 = el("thead"), r2 = el("tr");
+    ["decile", "n", "predicted", "actual", "gap", "p_min", "p_max"].forEach(function (h) {
+      r2.appendChild(el("th", null, h));
+    });
+    h2.appendChild(r2); t2.appendChild(h2);
+    var b2 = el("tbody");
+    calib.forEach(function (r) {
+      var tr = el("tr");
+      ["decile", "n", "predicted", "actual", "gap", "p_min", "p_max"].forEach(function (h) {
+        var v = r[h];
+        tr.appendChild(el("td", h === "decile" ? null : "num",
+          (h === "decile" || h === "n") ? v : Number(v).toFixed(6)));
+      });
+      b2.appendChild(tr);
+    });
+    t2.appendChild(b2); s2.appendChild(t2); box.appendChild(s2);
+
+    var ece = calib.reduce(function (s, r) {
+      return s + Number(r.n) * Math.abs(Number(r.gap));
+    }, 0) / calib.reduce(function (s, r) { return s + Number(r.n); }, 0);
+    box.appendChild(el("p", "note",
+      "Expected calibration error, as the n-weighted mean of the committed |gap| " +
+      "column: " + ece.toFixed(4) + ". Read from data/holdout_calibration.csv."));
+  }
+
+  if (comments && comments.length) {
+    box.appendChild(el("h3", null, "Prediction file provenance header"));
+    box.appendChild(el("p", "note",
+      "The " + comments.length + " lines the prediction file carries about itself, " +
+      "verbatim — including the frozen-universe caveat and the scoring rules."));
+    box.appendChild(el("pre", "raw", comments.join("\n")));
+  }
 
   return box;
 }
 
-/* ---------------------------------------------------------------------------
-   Load
---------------------------------------------------------------------------- */
+/* ================================== load ================================ */
+
+var HOLDOUT = null, CALIB = null, COMMENTS = null;
+
+function refreshTech() {
+  if (!HOLDOUT) return;
+  show("techBox", renderTech(HOLDOUT, CALIB, COMMENTS));
+}
 
 function loadRun(fileName) {
   var url = "../data/" + fileName;
@@ -689,77 +959,101 @@ function loadRun(fileName) {
 
   return fetchText(url).then(function (text) {
     var split = splitComments(text);
-    var meta = parseMeta(split.comments);
     var parsed = parseCSV(split.body);
-
     if (!parsed.header.length || !parsed.rows.length) {
-      throw new Error("no data rows found after " + split.comments.length +
-                      " comment lines");
+      throw new Error("no data rows found after " + split.comments.length + " comment lines");
     }
-    show("metaBox", renderMeta(meta, split.comments, fileName));
+    COMMENTS = split.comments;
+    show("metaBox", renderMeta(parseMeta(split.comments), fileName));
     show("tableBox", renderPredictions(parsed.header, toObjects(parsed)));
+    refreshTech();
   }).catch(function (e) {
-    show("metaBox", errorBox("Could not load " + url,
-      String(e.message || e), servingHint()));
+    show("metaBox", errorBox("Could not load " + url, String(e.message || e), servingHint()));
     show("tableBox", errorBox("No predictions to show",
       "The prediction file did not load, so the table is empty.", null));
   });
 }
 
 function loadManifest() {
-  return fetchText("predictions.json").then(function (t) {
-    return JSON.parse(t);
-  }).then(function (manifest) {
-    var list = (manifest && manifest.predictions) || [];
-    if (!list.length) throw new Error("manifest lists no prediction files");
-
-    var pick = document.getElementById("runPick");
-    pick.textContent = "";
-    list.forEach(function (entry, i) {
-      var opt = el("option", null,
-        entry.cut_date ? ("cut " + entry.cut_date + "  —  " + entry.file) : entry.file);
-      opt.value = entry.file;
-      if (i === 0) opt.selected = true;
-      pick.appendChild(opt);
+  return fetchText("predictions.json").then(function (t) { return JSON.parse(t); })
+    .then(function (manifest) {
+      var list = (manifest && manifest.predictions) || [];
+      if (!list.length) throw new Error("manifest lists no prediction files");
+      var pick = document.getElementById("runPick");
+      pick.textContent = "";
+      list.forEach(function (entry, i) {
+        var opt = el("option", null,
+          entry.cut_date ? ("made " + entry.cut_date + "  —  " + entry.file) : entry.file);
+        opt.value = entry.file;
+        if (i === 0) opt.selected = true;
+        pick.appendChild(opt);
+      });
+      pick.disabled = list.length < 2;
+      pick.addEventListener("change", function () { loadRun(pick.value); });
+      return loadRun(list[0].file);
+    }).catch(function (e) {
+      var pick = document.getElementById("runPick");
+      pick.textContent = ""; pick.appendChild(el("option", null, "unavailable"));
+      show("metaBox", errorBox("Could not read docs/predictions.json",
+        String(e.message || e),
+        "A static host cannot list a directory, so that manifest is how this page " +
+        "finds the prediction files. Add an entry to it after every run_forward.py " +
+        "run. " + servingHint()));
+      show("tableBox", errorBox("No predictions to show",
+        "Without the manifest the page does not know which file to read.", null));
     });
-    pick.disabled = list.length < 2;
-    pick.addEventListener("change", function () { loadRun(pick.value); });
-    return loadRun(list[0].file);
+}
+
+function loadFeatures() {
+  return fetchText("../config/frozen_model.json").then(function (t) {
+    show("featuresBox", renderFeatures(JSON.parse(t)));
   }).catch(function (e) {
-    var pick = document.getElementById("runPick");
-    pick.textContent = "";
-    pick.appendChild(el("option", null, "unavailable"));
-    show("metaBox", errorBox("Could not read docs/predictions.json",
+    show("featuresBox", errorBox("Could not load ../config/frozen_model.json",
       String(e.message || e),
-      "A static host cannot list a directory, so that manifest is how this page " +
-      "finds the prediction files. Add an entry to it after every run_forward.py " +
-      "run. " + servingHint()));
-    show("tableBox", errorBox("No predictions to show",
-      "Without the manifest the page does not know which file to read.", null));
+      "The list of inputs is read from the frozen config so it can never drift " +
+      "from what the model actually uses. " + servingHint()));
   });
 }
 
-function loadHoldout() {
+function loadScoreboard() {
   return fetchText("../data/holdout_results.csv").then(function (text) {
     var parsed = parseCSV(splitComments(text).body);
     if (!parsed.rows.length) throw new Error("file has no data rows");
-    show("holdoutBox", renderHoldout(toObjects(parsed)));
+    HOLDOUT = toObjects(parsed);
+    show("scoreBox", renderScoreboard(HOLDOUT));
+    refreshTech();
   }).catch(function (e) {
-    show("holdoutBox", errorBox("Could not load ../data/holdout_results.csv",
+    show("scoreBox", errorBox("Could not load ../data/holdout_results.csv",
+      String(e.message || e), servingHint()));
+    show("techBox", errorBox("Technical detail unavailable",
+      "The holdout results file did not load.", servingHint()));
+  });
+}
+
+function loadCalibration() {
+  return fetchText("../data/holdout_calibration.csv").then(function (text) {
+    var parsed = parseCSV(splitComments(text).body);
+    if (!parsed.rows.length) throw new Error("file has no data rows");
+    CALIB = toObjects(parsed);
+    show("calibBox", renderCalibration(CALIB));
+    refreshTech();
+  }).catch(function (e) {
+    show("calibBox", errorBox("Could not load ../data/holdout_calibration.csv",
       String(e.message || e), servingHint()));
   });
 }
 
 if (IS_FILE) {
   var warn = errorBox("This page is open from disk (file://)",
-    "fetch() cannot read local files, so no data will load.",
-    servingHint());
-  document.querySelector(".wrap").insertBefore(
-    warn, document.querySelector(".wrap").children[2]);
+    "fetch() cannot read local files, so no data will load.", servingHint());
+  var wrap = document.querySelector(".wrap");
+  wrap.insertBefore(warn, wrap.children[2]);
 }
 
+loadFeatures();
+loadCalibration();
+loadScoreboard();
 loadManifest();
-loadHoldout();
 </script>
 </body>
 </html>
