@@ -711,6 +711,97 @@ the holdout label distribution was not computed.
 
 ---
 
+## Phase 3: the live forward test — scoring rule (pre-registered 2026-09-04)
+
+Fixed on **2026-09-04**, the same day `data/live_predictions_2026-09-04.csv` was
+committed and **before any quarter it predicts had been filed**. No outcome
+existed when this was written, and none has been read since.
+
+The 2022–2025 holdout is spent (§ *The locked holdout*). The forward test is the
+replacement, and its one advantage over a backtest — that the predictions were
+recorded before the answers existed — is destroyed by any discretion about
+*when to look*. Scoring early, seeing a bad number and waiting for more filings
+is indistinguishable, in the committed record, from scoring once at a fixed
+point. So the trigger is mechanical and is written down here in advance.
+
+### When a scoring run may happen
+
+`scripts/score_forward.py` runs **once per committed prediction file**, and only
+when **every row** in that file is either *scoreable* or *excluded*:
+
+- **Scoreable** — the ticker has filed a quarter whose `prediction_date`
+  (`filed_date + 1 day`) falls after the file's `cut_date`, and that quarter
+  yields a non-null `label_yoy` under the panel's own construction rules:
+  `MIN(filed)`, the 120-day filing-lag filter, the ±45-day year-ago match, split
+  adjustment from restatement evidence, and the `STUDY_START` floor.
+- **Excluded** — either the filing arrived but its label is null under those
+  same rules (no year-ago quarter within ±45 days, or a split that cannot be
+  pinned to one side of its window), or **no qualifying filing has appeared by
+  `expected_period_end + 120 days`**, both values read from the committed
+  prediction file.
+- **Outstanding** — anything else. A run is permitted only when the outstanding
+  count is **zero**.
+
+**The resolution test is on the filing date, not on `period_end`.** This is not
+a detail. A prediction is for *the next quarter the company files after the
+cut*, and for 114 of the 474 rows in the 2026-09-04 file that quarter **ends
+before the cut date**. MSFT is one: its last filed quarter ended 2026-03-31, the
+file records an `expected_period_end` of 2026-07-01, and the cut is 2026-09-04 —
+the quarter being predicted closes two months *before* the prediction was even
+made, and is simply not filed yet. A test worded as "a filing with
+`period_end` after `cut_date`" would leave those 114 rows permanently
+unresolvable and silently discard 24% of the file, keeping the subset that
+happens to report on a calendar-year rhythm. Filing date is also the exact
+complement of the rule that generated the file: `run_forward.py` treated
+everything with `prediction_date <= cut_date` as history, so everything after it
+is the forward window.
+
+The 120-day exclusion clock is keyed to `expected_period_end`, which is
+**already committed inside the prediction file** and therefore cannot be moved
+after the fact. 120 days is the panel's own `MAX_FILING_LAG_DAYS` — the
+threshold past which a filing is treated as not having arrived on a normal
+reporting schedule. `expected_period_end` is an estimate, and where the estimate
+is poor the clock is generous; it errs toward waiting rather than toward
+discarding a row.
+
+### Partial scoring is not permitted
+
+A run that cannot resolve every row **scores nothing**. It reports which rows are
+outstanding and exits. There is no partial result, no interim figure, and no
+"provisional" number — the companies that report first are not a random sample
+of the universe, so an early subset is a biased one, and a sequence of partial
+looks is the discretion this rule exists to remove.
+
+### The result is committed whatever it is
+
+The scored output and the run that produced it are committed **in the same
+commit**, unedited, whether the model beats the baseline, matches it, or loses to
+it. A failing forward test is a result and will be recorded as one. Metrics are
+those `scripts/score_forward.py` already computes — accuracy and log-loss against
+a constant baseline whose probability is the prediction file's own
+`training_positive_rate`, never the rate of the period being scored — fixed by
+committed code before any outcome existed. The run also asserts that the
+prediction file's commit predates every filing it scores against; if that fails,
+nothing is scored.
+
+### What must change in the code before the first run
+
+`scripts/score_forward.py` as committed does **not** yet implement this rule, and
+recording that here is part of the pre-registration:
+
+1. It accepts `--rescore`, which permits a second run over the same file. That
+   flag must be removed, or restricted to a run that scored nothing.
+2. It writes a result with rows still unfiled and labels it a partial score.
+   That path must become a refusal.
+3. It has no exclusion clock; `expected_period_end + 120 days` does not exist in
+   the code yet.
+
+Those are code changes, not changes to this rule. This entry is text-only and
+deliberately precedes them, so the rule cannot be shaped around whatever the
+implementation happened to make easy.
+
+---
+
 ## Layout
 
 ```

@@ -422,3 +422,35 @@ The defensible claim is narrow: **on 5,521 out-of-sample quarters, prior
 earnings history predicted the direction of the next year-over-year EPS
 comparison better than the base rate, by 0.042 log-loss and 6.8 accuracy
 points, under a protocol fixed in advance.**
+
+
+---
+
+## 10. Addendum: the live forward test (added 2026-09-04)
+
+Sections 1–9 were written when the 2022–2025 holdout was the only out-of-sample
+evidence in this study, and §9 records it as spent. It is. This section records
+that a second test has since been opened. **Nothing above is revised or
+restated.**
+
+On **2026-09-04**, `scripts/run_forward.py` generated **474 predictions** with
+`config/frozen_model.json` revision 3 unchanged, and they were committed to
+`data/live_predictions_2026-09-04.csv` before any of the quarters they predict
+had been filed. Each row is one S&P 500 constituent's next quarterly report; the
+target is the same `label_yoy` defined in §4.
+
+**They are unscored.** No outcome for them exists in this repository. None of the
+figures in §7, §8 or the closing claim above describes them, and no accuracy
+figure anywhere in this document should be read as evidence about them.
+
+When and how they may be scored was fixed on the same day, before any outcome
+existed, in **README.md § "Phase 3: the live forward test — scoring rule
+(pre-registered 2026-09-04)"**. In short: one scoring run per prediction file;
+the run is permitted only once every row is either scoreable or mechanically
+excluded by a stated criterion; partial scoring is not permitted, and a run that
+cannot resolve every row scores nothing; and the result is committed whatever it
+is, in the same commit as the score file.
+
+The forward test exists because of §9's last point. The holdout has been read,
+so it can no longer test anything; the only honest evidence left is a prediction
+recorded before its answer existed.
