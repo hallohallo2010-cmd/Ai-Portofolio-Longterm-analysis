@@ -97,6 +97,7 @@ from src.index_membership import (  # noqa: E402
 # kind.
 from scripts.build_eps_panel import (  # noqa: E402
     MAX_FILING_LAG_DAYS,
+    STUDY_END,
     STUDY_START,
     apply_lag_filter,
     apply_split_adjustment,
@@ -496,6 +497,36 @@ def build_new_history(all_facts: pd.DataFrame, panel: pd.DataFrame,
         established = [event for event in split_events if event["established"]]
         print(f"splits detected         : {len(split_events)} "
               f"({len(established)} bounded)")
+
+        # The panel's STUDY_START floor, which this script would otherwise skip.
+        #
+        # It is not optional and it is not cosmetic. EDGAR returns a filer's WHOLE
+        # history, and the panel dropped every quarter before 2011 because XBRL
+        # tagging had not settled -- so those rows are absent from the panel,
+        # which means the (ticker, period_end) "already known" check above does
+        # not recognise them and they arrive here looking new. Their filing lags
+        # are short, so the lag filter does not catch them either. Without this
+        # they land in the window the frozen config is refit on: measured at the
+        # 2026-09-04 cut, 185 rows from 2009 and 2010.
+        #
+        # Applied AFTER the year-ago match, exactly as build_eps_panel does it, so
+        # a surviving pre-2011 quarter can still serve as a year-ago lookup for an
+        # in-window quarter without itself reaching the output.
+        #
+        # STUDY_END is deliberately NOT applied. The panel stops at
+        # STUDY_END because membership could not be gated past the pinned
+        # revision; going beyond it is the entire point of a forward test, and the
+        # membership question is answered by the frozen-universe decision instead.
+        before_floor = len(new_rows)
+        new_rows = new_rows.loc[new_rows["period_end"] >= STUDY_START].copy()
+        print(f"STUDY_START floor       : {len(new_rows)} kept, "
+              f"{before_floor - len(new_rows)} pre-{STUDY_START.year} rows dropped")
+
+        # Of what survives, the rows past STUDY_END are the genuinely new
+        # quarters; the rest are backfill the panel did not happen to hold.
+        beyond = int((new_rows["period_end"] > STUDY_END).sum())
+        print(f"    past STUDY_END      : {beyond} (new quarters), "
+              f"{len(new_rows) - beyond} backfill within the panel's window")
 
         new_rows = apply_split_adjustment(new_rows, split_events)
         new_rows = attach_label(new_rows)
