@@ -24,9 +24,10 @@ import requests
 # Contact identity -- EDGAR rejects requests that do not carry one.
 # --------------------------------------------------------------------------
 
-# REPLACE THIS with your own address. Every script that imports this module
-# inherits it, and each will refuse to call EDGAR while it is the placeholder.
-SEC_CONTACT_EMAIL = "REPLACE_ME@example.com"
+# The contact address EDGAR sees in the User-Agent. Every script that imports
+# this module inherits it, and sec_headers() aborts if it is ever put back to a
+# placeholder.
+SEC_CONTACT_EMAIL = "AIMLlongtermstocks@outlook.com"
 SEC_APP_NAME = "earnings-surprise-research"
 
 # --------------------------------------------------------------------------
