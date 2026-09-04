@@ -741,3 +741,4 @@ python scripts/build_eps_panel.py      # ~900 EDGAR calls; caches to data/fact_c
 python scripts/build_features_v1.py    # offline; reads the panel only
 python scripts/train_walkforward.py    # offline; locks the 2022+ holdout at load
 ```
+
