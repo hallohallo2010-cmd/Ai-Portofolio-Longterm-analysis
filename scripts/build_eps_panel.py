@@ -57,7 +57,15 @@ from src.index_membership import (  # noqa: E402
 # would carry a filing date up to a year later than the market's actual
 # knowledge date. The panel therefore starts here.
 STUDY_START = pd.Timestamp("2011-01-01")
-WINDOW_END = pd.Timestamp("2025-12-31")
+
+# The panel stops here. Membership is reconstructed from a source pinned at
+# 2025-05-27, so quarters after 2025 cannot be gated against a trustworthy
+# constituent list -- and the most recent quarters are the ones most likely to
+# be restated later. Rows past this bound are dropped and logged, never kept.
+STUDY_END = pd.Timestamp("2025-12-31")
+
+# The membership changes table is filtered to the same window.
+WINDOW_END = STUDY_END
 
 # A quarter filed more than this long after period end did not become public on
 # a normal reporting schedule; its filed_date cannot be trusted as the moment the
@@ -435,6 +443,11 @@ def verify_panel(panel: pd.DataFrame) -> None:
         fail(f"rows survived with period_end before {STUDY_START.date()}.")
     print(f"PASS  no row before STUDY_START ({STUDY_START.date()})")
 
+    if (panel["period_end"] > STUDY_END).any():
+        late = int((panel["period_end"] > STUDY_END).sum())
+        fail(f"{late} rows survived with period_end after STUDY_END ({STUDY_END.date()}).")
+    print(f"PASS  no row after STUDY_END ({STUDY_END.date()})")
+
 
 # --------------------------------------------------------------------------
 # Reporting
@@ -544,12 +557,22 @@ def main() -> None:
     section("STAGE 3 -- year-ago match, splits, label")
     matched = attach_year_ago(after_lag)
 
-    in_study = matched["period_end"] >= STUDY_START
-    panel = matched.loc[in_study].copy()
-    window_dropped = matched.loc[~in_study].copy()
+    before_start = matched["period_end"] < STUDY_START
+    after_end = matched["period_end"] > STUDY_END
+
+    panel = matched.loc[~before_start & ~after_end].copy()
+
+    window_dropped = matched.loc[before_start].copy()
     window_dropped["reason"] = f"period_end < STUDY_START ({STUDY_START.date()})"
-    print(f"study window {STUDY_START.date()} onward: {len(panel)} rows "
-          f"({len(window_dropped)} warm-up rows used for lookup only)")
+
+    # Kept separate from the warm-up rows: those are a deliberate lookup buffer,
+    # these are simply outside the study window.
+    late_dropped = matched.loc[after_end].copy()
+    late_dropped["reason"] = "after_study_window"
+
+    print(f"study window {STUDY_START.date()} .. {STUDY_END.date()}: {len(panel)} rows")
+    print(f"    warm-up rows before start (lookup only): {len(window_dropped)}")
+    print(f"    rows after STUDY_END dropped           : {len(late_dropped)}")
 
     panel["prediction_date"] = panel["filed_date"] + pd.Timedelta(days=1)
     panel["prediction_date_year_ago"] = panel["filed_date_year_ago"] + pd.Timedelta(days=1)
@@ -605,7 +628,10 @@ def main() -> None:
     # ---- drops ------------------------------------------------------------
     log_columns = ["ticker", "period_end", "filed_date", "filing_lag_days", "reason"]
     dropped = pd.concat(
-        [frame[log_columns] for frame in (lag_dropped, window_dropped, gate_dropped)],
+        [
+            frame[log_columns]
+            for frame in (lag_dropped, window_dropped, late_dropped, gate_dropped)
+        ],
         ignore_index=True,
     )
     dropped = dropped.rename(
