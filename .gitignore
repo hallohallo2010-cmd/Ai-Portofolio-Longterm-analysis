@@ -233,3 +233,6 @@ data/*
 
 # Phase 1 deliverable: the feature table, tracked on the same reasoning.
 !data/features_v1.parquet
+
+# Phase 2: per-fold, per-model scores.
+!data/walkforward_results.csv

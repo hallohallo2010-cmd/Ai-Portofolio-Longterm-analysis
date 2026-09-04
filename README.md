@@ -315,15 +315,118 @@ that subset.
 
 ---
 
+## Phase 2, step 1: baselines and walk-forward scaffolding
+
+No tuning. One pass, three models, honest numbers.
+
+### The locked holdout — pre-registered
+
+**2022-01-01 onward is a locked holdout: 5,898 rows that have not been read.**
+`scripts/train_walkforward.py` discards them at load, before any other stage
+touches the data, and asserts that every fold ends strictly before the
+boundary. No model has been selected on them and no hyperparameter has been
+searched anywhere.
+
+### The split
+
+Expanding window, cut on `prediction_date` — never `period_end`, since a
+quarter ending in December 2014 that filed in February 2015 was not knowable
+until 2015.
+
+```
+train 2011-2014 -> validate 2015      ...      train 2011-2020 -> validate 2021
+```
+
+16,232 modelling rows after dropping 1,446 null labels. Rows with null
+*features* are kept (19.3% of them); LightGBM routes NaN natively and logistic
+regression median-imputes within each training fold only.
+
+### The feature set
+
+Ten features, all prior-quarter only: `eps_growth_yoy_lag_1..4`,
+`label_lag_1..4`, `growth_streak`, `quarters_available`. `eps_growth_yoy` and
+`growth_acceleration` are excluded as target identities and the exclusion is
+asserted at runtime.
+
+### Results
+
+| model | mean acc | sd | mean log-loss | vs constant | folds won |
+|---|---:|---:|---:|---:|---:|
+| constant (always 1) | 60.0% | 10.00% | 0.6766 | — | 0/7 |
+| logistic | 64.4% | 3.43% | 0.6494 | +4.4pp | 5/7 |
+| LightGBM | 65.5% | 4.85% | 0.6192 | +5.5pp | 5/7 |
+
+Both models beat the constant on log-loss in **all seven** folds, and on
+accuracy in five. They predict a genuine mix (58–80% positive), not the
+majority class.
+
+**Caveat, stated because it changes the reading:** LightGBM early-stops on the
+fold it is scored on, so its numbers are optimistically biased relative to the
+other two. A clean comparison needs an inner split carved from the training
+years.
+
+### The baseline is not stable
+
+The single most important result in this step:
+
+| year | 2015 | 2016 | 2017 | 2018 | 2019 | 2020 | 2021 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| positive rate | 54.0% | 53.5% | 64.5% | 69.2% | 57.2% | **46.5%** | **75.1%** |
+
+A 28.6-point spread, σ = 10.0pp. The 60.3% figure pre-registered from the full
+panel is an average over years that look nothing like each other — 2020 and
+2021 are the COVID collapse and rebound. "Accuracy minus constant" is therefore
+not comparable across years: the models' worst folds (2018 −5.0pp, 2021
+−4.2pp) are the years the constant baseline happened to be strongest, and their
+best fold (2020 +14.3pp) is the year it was weakest. Log-loss, which does not
+depend on where the class boundary falls, is the more trustworthy comparison —
+and on log-loss both models win every fold.
+
+### Is it just learning which companies grow?
+
+Ticker identity is not in the feature set, so the model cannot memorise
+companies outright. It can get there indirectly: `growth_streak` and
+`label_lag_*` are company-persistence proxies.
+
+Per-ticker, on pooled validation folds (340 tickers with ≥20 rows), LightGBM
+has median accuracy 65.4% and median lift over always-predict-1 of +3.7pp,
+beating that baseline on 189 of 340 tickers (55.6%).
+
+- `corr(per-ticker accuracy, per-ticker positive rate)` = **+0.517**
+- `corr(per-ticker lift, per-ticker positive rate)` = **−0.620**
+
+The second is partly arithmetic — lift *is* accuracy minus positive rate — but
+the direction is clear: the edge sits in the low-base-rate names, where
+always-predict-1 is weak, and adds little on the reliable growers. Most of the
+headline accuracy on those names is the base rate, not the model. So the answer
+is a qualified yes: much of what looks like skill is company persistence.
+
+### Known weakness carried into step 2
+
+The `eps_growth_yoy_lag_*` coefficients come out near zero (~0.05 against 0.39
+for `label_lag_1`). Those features reach 4.7e7 with σ ≈ 4.2e5, so standardizing
+maps nearly every row to a spike near zero. A linear model cannot use them in
+that shape; LightGBM, being rank-based, is unaffected — part of why it leads.
+Winsorizing or rank-transforming is the obvious fix and is deliberately **not**
+applied here, since choosing the transform against these folds would tune on
+them.
+
+`label_lag_4` carries a **negative** coefficient (−0.25), consistent with the
+Phase 1 rank correlation. A year-ago beat is mild evidence against a beat now.
+
+---
+
 ## Layout
 
 ```
 scripts/build_eps_panel.py     Phase 0: the panel and the label
 scripts/build_features_v1.py   Phase 1: EPS-derived features
+scripts/train_walkforward.py   Phase 2: baselines and walk-forward validation
 src/data_loader.py             all SEC EDGAR access; CIK resolution
 src/index_membership.py        membership reconstruction from the pinned revision
 data/eps_panel.parquet         the panel (tracked)
 data/features_v1.parquet       the feature table (tracked)
+data/walkforward_results.csv   per-fold, per-model scores (tracked)
 ```
 
 `src/data_loader.py` is the single source of truth for EDGAR access. Scripts
@@ -339,4 +442,5 @@ while it is the placeholder.
 pip install -r requirements.txt
 python scripts/build_eps_panel.py      # ~900 EDGAR calls; caches to data/fact_cache/
 python scripts/build_features_v1.py    # offline; reads the panel only
+python scripts/train_walkforward.py    # offline; locks the 2022+ holdout at load
 ```
