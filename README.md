@@ -513,6 +513,122 @@ on where the class boundary happens to fall.
 
 ---
 
+## Frozen model (pre-registered)
+
+**`logistic_rank` is frozen.** The full specification — model class, exact
+feature list and order, rank-transform spec, imputation rule, training window,
+and the git SHA of the code that produced it — is committed in
+[`config/frozen_model.json`](config/frozen_model.json).
+
+**That file was committed before the holdout was read for the first time.**
+Anything in it that changes after the holdout has been read invalidates the
+holdout as a test.
+
+### Why this model
+
+Chosen over `lightgbm_inner_es` on **structural grounds, not on a log-loss
+margin**. The two are statistically indistinguishable:
+
+| | mean log-loss | sd across folds |
+|---|---:|---:|
+| `lightgbm_inner_es` | 0.6275 | 0.0460 |
+| **`logistic_rank`** | **0.6281** | **0.0425** |
+| constant (always 1) | 0.6766 | 0.0438 |
+
+Paired by fold: mean difference **0.0006**, standard error 0.0052,
+**t = 0.12 on 6 df**, LightGBM winning 4 of 7 folds. That is a coin flip, not a
+ranking. The tie-breakers are all properties that hold independently of these
+folds: `logistic_rank` is deterministic, carries no early-stopping iteration
+forward, needs no inner split (so it trains on the year closest to the fold it
+must predict, which LightGBM gives up), has the lower fold-to-fold spread, and
+wins 2020 — the regime-break year — by the largest single-fold margin either
+model achieves.
+
+Walk-forward mean log-loss **0.6281 vs 0.6766** for the constant baseline,
+beating it in **7 of 7** folds.
+
+### The bias-correction finding
+
+This is the result worth carrying forward, and it is a caution about method
+rather than a fact about earnings.
+
+In Phase 2 step 1, LightGBM appeared to lead logistic regression by **0.030
+log-loss** (0.6192 vs 0.6494). After two structural corrections that gap fell
+to **0.0006**. Essentially all of the apparent advantage was measurement error,
+in two parts:
+
+1. **Early-stopping leakage.** LightGBM early-stopped on the very fold it was
+   scored on, choosing its stopping iteration using the answer. Holding out the
+   last training year as an inner validation set instead cost it **+0.0083**
+   log-loss.
+2. **An unscaled feature.** `eps_growth_yoy_lag_*` reach 4.7e7 with σ ≈ 4.2e5,
+   so standardizing collapsed them to a spike near zero and the linear model
+   could not use them at all. Rank-transforming them — fitted on the training
+   window only — gained logistic **0.0213** log-loss and raised the mean
+   |coefficient| on those four features by **5.0×**. `eps_growth_yoy_lag_4`
+   went from −0.020 to −0.394 and became the largest coefficient in the model.
+
+Neither correction was a choice made against fold results; both would have been
+required whatever the numbers had been. The lesson generalises: a tree model
+beating a linear one by a margin like this is worth suspecting before it is
+worth believing, because the two most likely explanations — a leaky validation
+protocol and a feature the linear model cannot physically use — both favour the
+tree for reasons that have nothing to do with the data.
+
+### Calibration
+
+Measured on pooled validation folds: **ECE 0.0218**, mean predicted 0.6026 vs
+mean actual 0.5988, monotone across 8 of 9 decile steps, top-minus-bottom
+spread +0.417.
+
+**Deciles 9 and 10 are inverted** (0.799 vs 0.790). Since Task B ranks on
+predicted probability, **treat the top 20% as one bucket** rather than trusting
+the ordering between them. Everything below decile 9 is cleanly ordered.
+
+One caveat recorded in the config rather than smoothed over: that decile table
+was computed for `lightgbm_inner_es`, the log-loss winner, before
+`logistic_rank` was chosen on structural grounds. `logistic_rank`'s own
+calibration has not been separately tabulated and should be measured on the
+holdout run.
+
+### Pre-registered success criterion
+
+Stated now, before the holdout is read. **Both conditions must hold:**
+
+1. holdout **log-loss** of `logistic_rank` **below** the holdout constant
+   baseline's log-loss;
+2. holdout **accuracy** of `logistic_rank` **above** the holdout constant
+   baseline's accuracy.
+
+The constant baseline predicts class 1 always, with probability equal to the
+**training window's** positive rate (0.610461, measured on 2011–2021). It
+cannot use the holdout's own rate — that would score the baseline using the
+answer.
+
+**The holdout base rate is unknown and may differ materially from 60.3%.**
+Across the seven validation folds the yearly positive rate ranged from 46.5% to
+75.1% — a 28.6-point spread, σ = 10.0pp — so a single figure is not a stable
+property of this data. Accuracy-vs-constant is therefore computed against **the
+holdout's own constant baseline**, not against 60.3% and not against the
+training window's 61.0%. Judging the model against 60.3% would reward or punish
+it for where the holdout base rate happened to land, which is not something the
+model controls.
+
+If the two conditions disagree, **log-loss is primary** — it does not depend on
+where the class boundary falls, which is exactly why it was chosen for the
+freeze decision.
+
+The holdout is 5,898 rows (5,521 labelled), `prediction_date` 2022-01-04 to
+2026-02-28. Only those counts and that span were inspected in order to write
+the pre-registration; the holdout label distribution was not computed. The
+model is fit **once** on 2011–2021 and predicts every labelled holdout row in a
+single pass, with no refitting as it walks forward — so predictions at the far
+end come from a model up to four years stale. That is a deliberate consequence
+of evaluating once, and it is recorded in the config so any per-year breakdown
+is read with it in mind.
+
+---
+
 ## Layout
 
 ```
@@ -525,6 +641,7 @@ data/eps_panel.parquet         the panel (tracked)
 data/features_v1.parquet       the feature table (tracked)
 data/walkforward_results.csv   per-fold, per-variant scores (tracked)
 data/walkforward_calibration.csv  decile calibration of the best model (tracked)
+config/frozen_model.json       the pre-registered frozen model (tracked)
 ```
 
 `src/data_loader.py` is the single source of truth for EDGAR access. Scripts
