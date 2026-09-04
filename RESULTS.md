@@ -9,8 +9,8 @@ model scored **0.6402 log-loss against a 0.6821 constant baseline** and
 **64.8% accuracy against 58.0%**, passing both pre-registered conditions on
 all four folds and pooled.
 
-Every number below is followed by the committed file it comes from. Two
-exceptions are flagged explicitly in §3.
+Every number below is followed by the committed file it comes from, and every
+such file is tracked in this repository.
 
 ---
 
@@ -141,15 +141,17 @@ Three repairs, all committed:
   entirely, including ticker *reuse* — MMI now returns Marcus & Millichap
   rather than Motorola Mobility (`src/data_loader.CIK_OVERRIDES`).
 
-> **Two figures below are not reproducible from a committed artifact.** The
-> reported collapse in no-history tickers, **60.4% → 12.8%**, and the **31
-> tickers still unrecoverable**, are emitted to console by
-> `scripts/recover_ciks.py` (`RESULT of ... NO_CIK tickers` block, lines
-> 314–322) and written to `data/unresolved_tickers.csv`, which is gitignored.
-> The script that computes them is committed; the run log is not. A reader
-> cannot currently verify these two numbers without re-running the recovery
-> against EDGAR. Every other number in this document can be checked against a
-> tracked file.
+A note on what is *not* quantified here. `scripts/recover_ciks.py` reports how
+far the recovery closed the gap — how many ever-constituents went from having
+no usable filing history to having one, and how many remain unresolvable after
+all three repairs. Those counts are printed to console and written to
+`data/unresolved_tickers.csv`, neither of which is committed, and the recovery
+cannot be re-run offline. Rather than cite figures a reader cannot check, this
+document states only what the tracked files support: the 151 recovered CIKs
+above, the 24 spans, the 3 overrides, and the survivorship gap below. Some
+tickers do remain unresolvable, and the panel's 716 tickers are the survivors
+of that process, but the exact count is not established by any committed
+artifact.
 
 **What survivorship correction bought.** In the final panel, names that were
 eventually removed from the index beat their year-ago quarter markedly less
@@ -389,10 +391,13 @@ This is why log-loss was pre-registered as primary
 direction of earnings growth. A predictable grower is easy here and carries no
 information the market lacked. Nothing here measures surprise.
 
-**Known data gaps.** 31 tickers remain unrecoverable (see the caveat in §3 —
-this figure is not reproducible from a committed artifact). **1,823 of 23,576
-panel rows carry null labels** — 834 with no year-ago match within ±45 days,
-989 with a split that could not be pinned to one side of its window
+**Known data gaps.** Some ever-constituents remain unresolvable to a filer even
+after name recovery and CIK spans, so the panel's **716 tickers**
+(`data/eps_panel.parquet`) are what survived resolution rather than the full
+ever-constituent universe; the exact shortfall is not established by any
+committed artifact (§3). **1,823 of 23,576 panel rows carry null labels** —
+834 with no year-ago match within ±45 days, and 989 with a split that could not
+be pinned to one side of its window
 (`data/eps_panel.parquet`). Those rows are dropped from training and scoring
 rather than imputed. The membership reconstruction depends on a single pinned
 Wikipedia revision, which is a genuine single point of failure.
