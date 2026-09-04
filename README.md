@@ -591,41 +591,85 @@ was computed for `lightgbm_inner_es`, the log-loss winner, before
 calibration has not been separately tabulated and should be measured on the
 holdout run.
 
+### Amendment (pre-hoc): fit-once → expanding walk-forward
+
+**Revision 2 of the pre-registration, committed as its own commit before any
+holdout row was read or scored.** The amendment is timestamped ahead of the
+run so it is evidently pre-hoc rather than a response to a result, and
+revision 1 is retained in the config rather than overwritten.
+
+The holdout is now evaluated as an expanding walk-forward, refitting each fold:
+
+```
+train 2011-2021 -> predict 2022      train 2011-2023 -> predict 2024
+train 2011-2022 -> predict 2023      train 2011-2024 -> predict 2025
+```
+
+Same frozen config throughout — same model, same ten features, same rank
+transform, same imputation rule. **No config changes between folds.** The whole
+pipeline is refit from scratch on each fold's own training window, so no
+quantile grid, median, mean, variance or coefficient is ever carried across
+folds.
+
+Why this replaces fit-once:
+
+- **Fit-once measures signal decay, not the research question.** A model held
+  fixed from 2021 while the world moves is being tested on how fast it goes
+  stale, which is a different question from whether earnings history carries
+  signal.
+- **Walk-forward matches the deployment protocol in Phase 3 step 4.** The
+  holdout should test the thing that would actually be run, not a
+  simplification of it.
+- **2022 is a regime break.** A model frozen at 2021 conflates staleness with
+  signal failure: if it did badly on 2024 there would be no way to tell whether
+  the signal had stopped working or the model had simply never seen the new
+  regime.
+
+What the amendment does *not* touch: the model, the features, the transform,
+the imputation rule, the success criterion, the expanding-window rule, or the
+`prediction_date` cut. It changes only **when the model is refit**.
+
+Two consequences recorded rather than discovered later. The protocol
+**consumes** the holdout — once fold 2 trains on 2022 those labels have been
+read, so this is a one-shot test with no second holdout available in this data.
+And **70 rows (62 labelled) in `prediction_year` 2026** — Q4-2025 period_ends
+filed in early 2026 — fall outside the four folds and are **explicitly excluded
+and pre-registered as excluded**, rather than silently dropped or swept into
+fold 4. They are 1.1% of the labelled holdout. Folds cover 5,828 rows, 5,459 of
+them labelled.
+
 ### Pre-registered success criterion
 
-Stated now, before the holdout is read. **Both conditions must hold:**
+Stated before the holdout is read, and **unchanged** by the amendment above —
+only its granularity is specified further. **Both conditions must hold:**
 
-1. holdout **log-loss** of `logistic_rank` **below** the holdout constant
-   baseline's log-loss;
-2. holdout **accuracy** of `logistic_rank` **above** the holdout constant
-   baseline's accuracy.
+1. **log-loss** of `logistic_rank` **below** the constant baseline's log-loss;
+2. **accuracy** of `logistic_rank` **above** the constant baseline's accuracy.
 
-The constant baseline predicts class 1 always, with probability equal to the
-**training window's** positive rate (0.610461, measured on 2011–2021). It
-cannot use the holdout's own rate — that would score the baseline using the
-answer.
+Evaluated **per-fold (all four) and pooled** across all scored rows.
+
+The constant baseline predicts class 1 always, with probability equal to **each
+fold's own training positive rate**. Fold 1 uses 0.610461 (2011–2021); folds
+2–4 use rates that include holdout years and are unknown at freeze time. The
+baseline may never use the rate of the year it is predicting — that would score
+the baseline with the answer.
 
 **The holdout base rate is unknown and may differ materially from 60.3%.**
 Across the seven validation folds the yearly positive rate ranged from 46.5% to
 75.1% — a 28.6-point spread, σ = 10.0pp — so a single figure is not a stable
-property of this data. Accuracy-vs-constant is therefore computed against **the
-holdout's own constant baseline**, not against 60.3% and not against the
-training window's 61.0%. Judging the model against 60.3% would reward or punish
-it for where the holdout base rate happened to land, which is not something the
-model controls.
+property of this data. Accuracy-vs-constant is therefore computed against
+**each fold's own constant baseline**, not against 60.3%, not against the
+training window's 61.0%, and not against one pooled figure. Judging the model
+against 60.3% would reward or punish it for where each year's base rate
+happened to land, which is not something the model controls.
 
 If the two conditions disagree, **log-loss is primary** — it does not depend on
 where the class boundary falls, which is exactly why it was chosen for the
-freeze decision.
+freeze decision. Passing on some folds and not others is a real possible
+outcome and will not be reported as a pass.
 
-The holdout is 5,898 rows (5,521 labelled), `prediction_date` 2022-01-04 to
-2026-02-28. Only those counts and that span were inspected in order to write
-the pre-registration; the holdout label distribution was not computed. The
-model is fit **once** on 2011–2021 and predicts every labelled holdout row in a
-single pass, with no refitting as it walks forward — so predictions at the far
-end come from a model up to four years stale. That is a deliberate consequence
-of evaluating once, and it is recorded in the config so any per-year breakdown
-is read with it in mind.
+Only row counts and date spans were inspected to write the pre-registration;
+the holdout label distribution was not computed.
 
 ---
 

@@ -2,11 +2,45 @@
   "_purpose": "Pre-registration of the frozen model. Committed BEFORE the holdout is read for the first time. Anything in this file that changes after the holdout has been read invalidates the holdout as a test.",
   "frozen_at": "2026-09-04",
   "phase": "Phase 2, step 3 -- freeze",
+  "revision": 2,
+
+  "amendments": [
+    {
+      "revision": 2,
+      "amended_at": "2026-09-04",
+      "status": "PRE-HOC -- committed before any holdout row was read or scored",
+      "changed": "Holdout evaluation protocol: fit-once -> expanding walk-forward.",
+      "from": "Fit the pipeline once on 2011-2021 and predict every labelled holdout row in a single pass, with no refitting.",
+      "to": "Four expanding folds: train 2011-2021 -> predict 2022; train 2011-2022 -> predict 2023; train 2011-2023 -> predict 2024; train 2011-2024 -> predict 2025.",
+      "rationale": [
+        "Fit-once measures SIGNAL DECAY, not the research question. A model held fixed from 2021 while the world moves is being tested on how fast it goes stale, which is a different question from whether earnings history carries signal.",
+        "Walk-forward matches the deployment protocol in Phase 3 step 4. The holdout should test the thing that would actually be run, not a simplification of it.",
+        "2022 is a regime break. A model frozen at 2021 conflates staleness with signal failure: if it does badly on 2024 there would be no way to tell whether the signal stopped working or the model simply had not seen the new regime."
+      ],
+      "unchanged": [
+        "model class and all estimator parameters",
+        "the ten features and their order",
+        "the rank transform (spec, target columns, fit scope)",
+        "the imputation rule",
+        "the success criterion itself",
+        "the expanding-window rule and the prediction_date cut"
+      ],
+      "_integrity_note": "This amendment changes only WHEN the model is refit, not what it is or how it is judged. It was written and committed as its own commit, before the holdout run, so the timestamp evidences that it is pre-hoc rather than a response to a result."
+    },
+    {
+      "revision": 1,
+      "amended_at": "2026-09-04",
+      "status": "superseded by revision 2, before any holdout row was read",
+      "protocol": "fit once on 2011-2021, predict all labelled holdout rows in one pass"
+    }
+  ],
 
   "code_provenance": {
     "git_sha": "8dcf0c62db6ce6db3bcbe3e20e597305bcdb0be0",
     "git_sha_short": "8dcf0c6",
-    "_note": "This is the SHA of the commit containing scripts/train_walkforward.py as it stood when the model was selected -- the code that produced the numbers this freeze is based on. The commit that adds THIS file is a child of it; a config cannot contain the SHA of the commit that carries it. Verify with: git show 8dcf0c6:scripts/train_walkforward.py",
+    "_note": "This is the SHA of the commit containing scripts/train_walkforward.py as it stood when the model was selected -- the code that produced the numbers this freeze is based on. The commit that adds THIS file is a descendant of it; a config cannot contain the SHA of the commit that carries it. Verify with: git show 8dcf0c6:scripts/train_walkforward.py",
+    "freeze_commit_sha": "03068a2277244a642d21f51707cdd0a2bc0a8547",
+    "_freeze_commit_note": "Revision 1 of this file was committed at 03068a2. Revision 2 is the amendment commit that supersedes it; both precede the holdout run.",
     "working_tree_clean_at_freeze": true,
     "produced_by": "scripts/train_walkforward.py",
     "inputs": [
@@ -61,6 +95,7 @@
 
   "preprocessing": {
     "_order": "rank transform -> impute -> scale -> fit. All steps live inside one sklearn Pipeline, so every parameter is learned on the training window ONLY and merely applied to the evaluation rows.",
+    "_refit_rule": "The whole pipeline is refit from scratch on each fold's own training window. Nothing -- quantile grid, medians, means, variances, coefficients -- is carried across folds.",
     "step_1_rank_transform": {
       "applies_to": [
         "eps_growth_yoy_lag_1",
@@ -89,7 +124,7 @@
         "quarters_available"
       ],
       "_reason": "These four features reach 4.7e7 with a standard deviation of 4.2e5. Standardizing alone collapses nearly every row to a spike near zero and leaves a linear model unable to use them. QuantileTransformer ignores NaN when fitting and preserves it, so it composes with the imputer that follows.",
-      "_fit_scope": "training window only, never across folds and never on evaluation rows"
+      "_fit_scope": "each fold's own training window ONLY -- never across folds, never on the rows being predicted"
     },
     "step_2_imputation": {
       "class": "sklearn.impute.SimpleImputer",
@@ -97,7 +132,7 @@
         "strategy": "median"
       },
       "applies_to": "all 10 features",
-      "_fit_scope": "training window only -- medians are learned there and applied to evaluation rows",
+      "_fit_scope": "each fold's own training window ONLY -- medians are learned there and applied to that fold's prediction rows",
       "_note": "Rows with null features are KEPT, never dropped. Imputation happens after the rank transform so the medians are computed on transformed values."
     },
     "step_3_scaling": {
@@ -106,57 +141,98 @@
         "with_mean": true,
         "with_std": true
       },
-      "_fit_scope": "training window only"
+      "_fit_scope": "each fold's own training window ONLY"
     }
   },
 
-  "training_window": {
+  "evaluation_protocol": {
+    "_status": "HOLDOUT NOT YET READ at the time this revision was committed",
+    "scheme": "expanding-window walk-forward, refit each fold",
     "_definition": "Cut on prediction_date, never period_end. prediction_date is filed_date + 1 day -- the first moment the number could have been acted on. period_end is when the quarter ended, which does not bound what was knowable.",
-    "start": "2011-01-01",
-    "end_exclusive": "2022-01-01",
-    "years": "2011-2021 inclusive",
-    "row_selection": "prediction_date < 2022-01-01 AND label_yoy is not null",
-    "n_rows": 16232,
-    "positive_rate": 0.610461,
-    "null_label_rows_dropped": 1446,
-    "null_feature_rows": "kept, 19.3% of the training window",
-    "walk_forward_used_for_selection": {
-      "_note": "Model selection used an expanding-window walk-forward INSIDE this training window. It is recorded for provenance; the frozen model is refit once on the whole window.",
-      "scheme": "expanding, train 2011..Y-1 -> validate Y",
-      "validation_years": [2015, 2016, 2017, 2018, 2019, 2020, 2021]
-    }
-  },
-
-  "holdout": {
-    "_status": "NOT YET READ at the time this file was committed",
-    "start_inclusive": "2022-01-01",
-    "row_selection": "prediction_date >= 2022-01-01",
-    "n_rows_total": 5898,
-    "n_rows_with_label": 5521,
-    "prediction_date_span": "2022-01-04 .. 2026-02-28",
-    "_metadata_only": "Only row counts and the date span were inspected in order to write this file. The holdout label distribution was NOT computed, and the holdout positive rate is unknown at freeze time.",
-    "evaluation_protocol": {
-      "fits": 1,
-      "procedure": "Fit the pipeline above once on the full training window (2011-2021), then predict every labelled holdout row in a single pass.",
-      "no_refitting": "The model is NOT refit or updated as it walks through the holdout years.",
-      "_known_property": "This means predictions for 2025 come from a model trained on data ending in 2021, so the model is up to four years stale at the far end of the holdout. This is a deliberate consequence of evaluating once; it is stated here rather than discovered later. Any per-year breakdown of holdout results should be read with it in mind."
-    }
+    "row_selection": "label_yoy is not null; rows with null FEATURES are kept",
+    "config_changes_between_folds": "NONE. Same model, same features, same transform spec, same imputation rule. Only the training window advances.",
+    "folds": [
+      {
+        "fold": 1,
+        "train_years": "2011-2021",
+        "train_row_selection": "prediction_date < 2022-01-01",
+        "predict_year": 2022,
+        "predict_row_selection": "prediction_date in [2022-01-01, 2023-01-01)",
+        "n_predict_rows": 1454,
+        "n_predict_rows_labelled": 1357,
+        "n_train_rows_labelled": 16232,
+        "train_positive_rate": 0.610461
+      },
+      {
+        "fold": 2,
+        "train_years": "2011-2022",
+        "train_row_selection": "prediction_date < 2023-01-01",
+        "predict_year": 2023,
+        "predict_row_selection": "prediction_date in [2023-01-01, 2024-01-01)",
+        "n_predict_rows": 1448,
+        "n_predict_rows_labelled": 1359,
+        "n_train_rows_labelled": "17589 (16232 + fold 1's 1357)",
+        "train_positive_rate": "unknown at freeze time -- depends on holdout labels"
+      },
+      {
+        "fold": 3,
+        "train_years": "2011-2023",
+        "train_row_selection": "prediction_date < 2024-01-01",
+        "predict_year": 2024,
+        "predict_row_selection": "prediction_date in [2024-01-01, 2025-01-01)",
+        "n_predict_rows": 1461,
+        "n_predict_rows_labelled": 1365,
+        "n_train_rows_labelled": "18948",
+        "train_positive_rate": "unknown at freeze time -- depends on holdout labels"
+      },
+      {
+        "fold": 4,
+        "train_years": "2011-2024",
+        "train_row_selection": "prediction_date < 2025-01-01",
+        "predict_year": 2025,
+        "predict_row_selection": "prediction_date in [2025-01-01, 2026-01-01)",
+        "n_predict_rows": 1465,
+        "n_predict_rows_labelled": 1378,
+        "n_train_rows_labelled": "20313",
+        "train_positive_rate": "unknown at freeze time -- depends on holdout labels"
+      }
+    ],
+    "total_rows_scored": 5828,
+    "total_labelled_rows_scored": 5459,
+    "excluded_rows": {
+      "prediction_year_2026": {
+        "n_rows": 70,
+        "n_labelled": 62,
+        "_reason": "These are Q4-2025 period_ends whose filings landed in early 2026 (prediction_date up to 2026-02-28). They are inside STUDY_END (period_end <= 2025-12-31) but outside the four folds specified above, which stop at predict_year 2025. Excluded EXPLICITLY and pre-registered as excluded, rather than silently dropped or silently swept into fold 4. They are 1.1% of the labelled holdout.",
+        "_if_this_changes": "Including them would mean fold 4 predicts '2025 and later'. That is a legitimate alternative, but it must be decided BEFORE the run and recorded as a further amendment -- not after seeing fold 4's result."
+      }
+    },
+    "assertions_required_at_run_time": [
+      "every fold's training rows have prediction_date strictly before that fold's first prediction row",
+      "no fold trains on a row it also predicts",
+      "the four prediction sets are disjoint and together cover prediction_year 2022-2025",
+      "the pipeline is refit per fold; no fitted state is reused across folds"
+    ],
+    "_single_use": "This protocol consumes the holdout. Once fold 2 trains on 2022, those labels have been read. The holdout is a one-shot test and there is no second one available in this data."
   },
 
   "success_criterion": {
-    "_status": "PRE-REGISTERED before the holdout was read. Both conditions must hold.",
-    "condition_1_log_loss": "holdout log-loss(logistic_rank) < holdout log-loss(constant baseline)",
-    "condition_2_accuracy": "holdout accuracy(logistic_rank) > holdout accuracy(constant baseline)",
+    "_status": "PRE-REGISTERED before the holdout was read. UNCHANGED by revision 2; only its evaluation granularity is specified further.",
+    "condition_1_log_loss": "log-loss(logistic_rank) < log-loss(constant baseline)",
+    "condition_2_accuracy": "accuracy(logistic_rank) > accuracy(constant baseline)",
+    "_both_must_hold": true,
+    "evaluated": "PER-FOLD (all four) and POOLED across all scored rows",
     "constant_baseline": {
       "class_prediction": "always 1",
-      "probability": 0.610461,
-      "_probability_source": "the TRAINING window's positive rate (2011-2021). It cannot be the holdout's own rate -- that would use the answer to score the baseline.",
-      "accuracy_on_holdout": "equals the holdout's realised positive rate, mechanically, since always-predict-1 is right exactly on the positive rows"
+      "probability": "each fold's OWN training positive rate, computed from that fold's training window",
+      "_probability_source": "Fold 1 uses 0.610461 (2011-2021). Folds 2-4 use rates that include holdout years and are unknown at freeze time. The baseline may never use the rate of the year it is predicting -- that would score the baseline using the answer.",
+      "accuracy_on_each_fold": "equals that fold's realised positive rate, mechanically, since always-predict-1 is right exactly on the positive rows"
     },
-    "_the_60_3_percent_trap": "The holdout base rate is UNKNOWN and may differ materially from the 60.3% measured on the full panel. Across the seven validation folds the yearly positive rate ranged from 46.5% to 75.1% -- a 28.6-point spread with sd 10.0pp -- so a single number is not a stable property of this data. Accuracy-vs-constant MUST therefore be computed against the holdout's OWN constant baseline, not against 60.3% and not against the training window's 61.0%. Judging the model against 60.3% would reward or punish it for where the holdout base rate happened to land.",
+    "_the_60_3_percent_trap": "The holdout base rate is UNKNOWN and may differ materially from the 60.3% measured on the full panel. Across the seven validation folds the yearly positive rate ranged from 46.5% to 75.1% -- a 28.6-point spread with sd 10.0pp -- so a single number is not a stable property of this data. Accuracy-vs-constant MUST be computed against EACH FOLD'S OWN constant baseline, not against 60.3%, not against the training window's 61.0%, and not against a single pooled figure. Judging the model against 60.3% would reward or punish it for where each year's base rate happened to land.",
     "_why_log_loss_leads": "Log-loss does not depend on where the class boundary falls, so it is comparable across periods with different base rates. Accuracy is not. If the two conditions disagree, log-loss is the one that was pre-registered as primary in Phase 2.",
+    "_partial_outcomes": "Passing on some folds and not others is a real possible outcome and is not to be reported as a pass. The per-fold results stand as they come out; the pooled result is the headline.",
     "walk_forward_reference_numbers": {
-      "_note": "What the frozen model achieved in selection. Recorded so holdout degradation is measurable, NOT as a threshold the holdout must clear.",
+      "_note": "What the frozen model achieved in SELECTION (2015-2021 validation folds). Recorded so holdout degradation is measurable, NOT as a threshold the holdout must clear.",
       "mean_log_loss": 0.6281,
       "mean_log_loss_constant": 0.6766,
       "pooled_log_loss": 0.6289,
