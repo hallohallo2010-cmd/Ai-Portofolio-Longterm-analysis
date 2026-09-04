@@ -239,3 +239,8 @@ data/*
 
 # Phase 2: decile calibration of the frozen model.
 !data/walkforward_calibration.csv
+
+# Phase 2 holdout: predictions, per-fold results, calibration.
+!data/holdout_predictions.csv
+!data/holdout_results.csv
+!data/holdout_calibration.csv

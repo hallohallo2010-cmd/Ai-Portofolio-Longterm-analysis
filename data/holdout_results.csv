@@ -1,0 +1,5 @@
+fold,trains_before,n_train,train_positive_rate,n_predicted,n_labelled,actual_positive_rate,model_log_loss,constant_log_loss,model_accuracy,constant_accuracy,model_brier,predicted_positive_rate,log_loss_delta,accuracy_delta,passes_log_loss,passes_accuracy,passes_both
+1,2022-01-01,16232,0.610461,1454,1357,0.554901,0.65352,0.693502,0.636699,0.554901,0.22896,0.675018,-0.039982,0.081798,True,True,True
+2,2023-01-01,17589,0.606174,1448,1359,0.546726,0.64259,0.696066,0.629139,0.546726,0.22534,0.617366,-0.053476,0.082413,True,True,True
+3,2024-01-01,18948,0.60191,1461,1365,0.6,0.635124,0.673019,0.667399,0.6,0.221257,0.693773,-0.037895,0.067399,True,True,True
+4,2025-01-01,20313,0.601782,1535,1440,0.615278,0.630023,0.66671,0.656944,0.615278,0.219179,0.688889,-0.036687,0.041666,True,True,True
