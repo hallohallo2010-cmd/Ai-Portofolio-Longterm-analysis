@@ -244,3 +244,8 @@ data/*
 !data/holdout_predictions.csv
 !data/holdout_results.csv
 !data/holdout_calibration.csv
+
+# Phase 3 live forward test: the prediction files ARE the experiment. Each one
+# has to be committed before the quarters it predicts are filed, so an ignore
+# rule that silently swallowed it would destroy the evidence the test rests on.
+!data/live_predictions_*.csv
