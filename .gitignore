@@ -236,3 +236,6 @@ data/*
 
 # Phase 2: per-fold, per-model scores.
 !data/walkforward_results.csv
+
+# Phase 2: decile calibration of the frozen model.
+!data/walkforward_calibration.csv

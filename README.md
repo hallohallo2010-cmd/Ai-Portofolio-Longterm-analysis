@@ -315,17 +315,18 @@ that subset.
 
 ---
 
-## Phase 2, step 1: baselines and walk-forward scaffolding
+## Phase 2: baselines and walk-forward validation
 
-No tuning. One pass, three models, honest numbers.
+No tuning. Every hyperparameter is fixed in advance and nothing is chosen
+against fold results.
 
 ### The locked holdout — pre-registered
 
 **2022-01-01 onward is a locked holdout: 5,898 rows that have not been read.**
 `scripts/train_walkforward.py` discards them at load, before any other stage
-touches the data, and asserts that every fold ends strictly before the
-boundary. No model has been selected on them and no hyperparameter has been
-searched anywhere.
+touches the data, and asserts that every fold — outer *and* inner — ends
+strictly before the boundary. No model has been selected on them and no
+hyperparameter has been searched anywhere.
 
 ### The split
 
@@ -338,81 +339,177 @@ train 2011-2014 -> validate 2015      ...      train 2011-2020 -> validate 2021
 ```
 
 16,232 modelling rows after dropping 1,446 null labels. Rows with null
-*features* are kept (19.3% of them); LightGBM routes NaN natively and logistic
+*features* are kept (19.3%); LightGBM routes NaN natively and logistic
 regression median-imputes within each training fold only.
-
-### The feature set
 
 Ten features, all prior-quarter only: `eps_growth_yoy_lag_1..4`,
 `label_lag_1..4`, `growth_streak`, `quarters_available`. `eps_growth_yoy` and
-`growth_acceleration` are excluded as target identities and the exclusion is
-asserted at runtime.
+`growth_acceleration` are excluded as target identities, asserted at runtime
+against the built matrix.
 
-### Results
+### Step 2: two structural corrections
 
-| model | mean acc | sd | mean log-loss | vs constant | folds won |
+**Both are corrections to the protocol, not choices made against fold
+results.** Each fixes a way the step-1 numbers were biased, and each would have
+been required whatever the numbers had come out as. Neither is a
+hyperparameter, and no variant was selected by comparing outcomes. The biased
+versions are still run, so the size of each bias is measured rather than
+asserted.
+
+**Fix 1 — inner validation split.** In step 1, LightGBM early-stopped on the
+same fold it was scored on, choosing its stopping iteration using the answer.
+Now the **last year of each training window** is held out as an inner
+validation set, the model trains on the years before it, and the outer fold is
+untouched until scoring. Asserted: the inner split sits strictly inside the
+training window, and early stopping never sees the scored fold.
+
+**Fix 2 — rank transform on `eps_growth_yoy_lag_*`.** Those features reach
+4.7e7 with σ ≈ 4.2e5, so standardizing collapsed nearly every row to a spike
+near zero and left the linear model unable to use them. A quantile transform is
+fitted on the **training window only** and applied to the validation fold,
+inside a `Pipeline` so the boundary is enforced by construction. Applied to the
+logistic model alone: a rank transform is strictly monotone and trees split on
+thresholds, so for LightGBM it is a no-op except for what a quantile grid would
+throw away.
+
+### How much each bias was worth
+
+**Fix 1 — LightGBM lost most of its lead.** The step-1 advantage was largely
+the bias:
+
+| | mean log-loss | mean accuracy |
+|---|---:|---:|
+| `lightgbm_outer_es` (biased) | 0.6192 | 65.5% |
+| `lightgbm_inner_es` (corrected) | **0.6275** | 64.9% |
+| cost of the correction | +0.0083 | −0.59pp |
+
+The correction also costs training rows — the last year becomes the
+early-stopping set. A useful internal check: the inner-split model for fold *Y*
+trains on exactly the same rows as the biased model for fold *Y−1*, and the two
+report identical stopping iterations, which is what the implementation should
+produce.
+
+**Fix 2 — the rank transform helped, and the features came alive.** Better
+log-loss in 6 of 7 folds:
+
+| | mean log-loss | mean accuracy |
+|---|---:|---:|
+| `logistic_raw` | 0.6494 | 64.4% |
+| `logistic_rank` | **0.6281** | 65.0% |
+| gain | −0.0213 | +0.66pp |
+
+Mean standardized coefficients across folds:
+
+| feature | before | after | ratio |
+|---|---:|---:|---:|
+| `eps_growth_yoy_lag_1` | +0.047 | +0.121 | 2.6× |
+| `eps_growth_yoy_lag_2` | +0.047 | +0.071 | 1.5× |
+| `eps_growth_yoy_lag_3` | +0.021 | −0.082 | 3.9× |
+| `eps_growth_yoy_lag_4` | −0.020 | **−0.394** | 20.1× |
+| `label_lag_1` | +0.387 | +0.273 | 0.7× |
+| `label_lag_4` | −0.212 | +0.084 | 0.4× |
+
+Mean |coefficient| on the rank-transformed features rises 5.0× (0.034 → 0.167)
+while the untouched features fall to 0.7×. They did come alive — and
+`eps_growth_yoy_lag_4` becomes the **largest** coefficient in the model,
+absorbing the mean-reversion signal that `label_lag_4` had been carrying as a
+crude binary. The negative sign is consistent with Phase 1: a strong quarter
+four back is evidence against a beat now.
+
+### Per-fold log-loss, all variants
+
+| year | constant | logistic_raw* | **logistic_rank** | lightgbm_outer_es* | **lightgbm_inner_es** |
 |---|---:|---:|---:|---:|---:|
-| constant (always 1) | 60.0% | 10.00% | 0.6766 | — | 0/7 |
-| logistic | 64.4% | 3.43% | 0.6494 | +4.4pp | 5/7 |
-| LightGBM | 65.5% | 4.85% | 0.6192 | +5.5pp | 5/7 |
+| 2015 | 0.7081 | 0.6841 | 0.6676 | 0.6482 | 0.6448 |
+| 2016 | 0.7034 | 0.6739 | 0.6162 | 0.6057 | 0.6313 |
+| 2017 | 0.6548 | 0.6281 | 0.6092 | 0.5938 | 0.6059 |
+| 2018 | 0.6333 | 0.6304 | 0.6161 | 0.6106 | 0.6253 |
+| 2019 | 0.6869 | 0.6657 | 0.6424 | 0.6383 | 0.6378 |
+| 2020 | 0.7351 | 0.6836 | 0.6874 | 0.6843 | 0.7005 |
+| 2021 | 0.6142 | 0.5802 | 0.5581 | 0.5532 | 0.5470 |
+| **mean** | 0.6766 | 0.6494 | **0.6281** | 0.6192 | **0.6275** |
 
-Both models beat the constant on log-loss in **all seven** folds, and on
-accuracy in five. They predict a genuine mix (58–80% positive), not the
-majority class.
+`*` = biased diagnostic, excluded from the freeze decision.
 
-**Caveat, stated because it changes the reading:** LightGBM early-stops on the
-fold it is scored on, so its numbers are optimistically biased relative to the
-other two. A clean comparison needs an inner split carved from the training
-years.
+Both corrected models beat the constant on log-loss in **all seven folds**.
+
+### Which model to freeze on
+
+Lowest mean log-loss is `lightgbm_inner_es` (0.6275) over `logistic_rank`
+(0.6281) — **a margin of 0.0006, which is noise.** Paired by fold:
+
+- mean paired difference **+0.0006**, standard error 0.0052
+- **t = +0.12 on 6 df**
+- LightGBM wins **4 of 7** folds
+
+The two are not separated by this evidence. On tie-breakers that do not depend
+on these folds, **`logistic_rank` is the better thing to freeze on**:
+
+- it is deterministic, with no early-stopping iteration to carry forward;
+- it needs no inner split, so it trains on the year closest to the fold it must
+  predict — LightGBM gives that year up;
+- it has lower fold-to-fold spread (sd 0.0425 vs 0.0460);
+- it wins 2020, the regime-break year, by the largest single-fold margin either
+  model achieves.
+
+The script reports the log-loss winner as asked and prints the tie-break
+reasoning alongside it. The choice between two statistically indistinguishable
+models on parsimony grounds is a judgement, and is recorded as one.
+
+### Calibration
+
+Deciles of predicted probability, pooled validation folds, `lightgbm_inner_es`:
+
+| decile | n | predicted | actual | gap |
+|---|---:|---:|---:|---:|
+| 1 | 1084 | 0.329 | 0.373 | +0.043 |
+| 2 | 1084 | 0.423 | 0.403 | −0.020 |
+| 3 | 1082 | 0.479 | 0.477 | −0.002 |
+| 4 | 1083 | 0.541 | 0.506 | −0.035 |
+| 5 | 1083 | 0.601 | 0.560 | −0.040 |
+| 6 | 1083 | 0.648 | 0.653 | +0.004 |
+| 7 | 1083 | 0.690 | 0.693 | +0.003 |
+| 8 | 1083 | 0.731 | 0.735 | +0.004 |
+| 9 | 1083 | 0.764 | 0.799 | +0.035 |
+| 10 | 1084 | 0.820 | 0.790 | −0.031 |
+
+- **ECE 0.0218**, mean predicted 0.6026 vs mean actual 0.5988 (+0.0038)
+- Brier 0.2190
+- monotone in **8 of 9** decile steps
+- top decile minus bottom: **+0.417** (37.3% → 79.0%)
+
+Good enough for Task B on both counts. Ranking needs only monotonicity, and the
+one inversion is the 9→10 step (0.799 → 0.790) — the top two deciles are
+effectively tied rather than ordered, so treat the top ~20% as one bucket
+rather than trusting the split between them. The level is usable too: ECE well
+under 0.05, with the largest miss a 4-point under-confidence in the bottom
+decile. The mid-range deciles (4 and 5) are the mildly over-confident ones.
+
+### Is it just learning which companies grow?
+
+Ticker identity is not in the feature set, so nothing can be memorised
+outright; `growth_streak` and `label_lag_*` are company-persistence proxies
+that reach the same place indirectly.
+
+340 tickers with ≥20 validation rows: median accuracy 64.3%, median lift over
+always-predict-1 +3.6pp, beating it on 185 of 340 (54.4%).
+`corr(accuracy, positive_rate)` = **+0.540**; `corr(lift, positive_rate)` =
+**−0.607**. The second is partly arithmetic — lift *is* accuracy minus positive
+rate — but the direction holds: the edge sits in the low-base-rate names where
+always-predict-1 is weak, and adds little on the reliable growers. Much of the
+headline accuracy on those names is the base rate, not the model.
 
 ### The baseline is not stable
-
-The single most important result in this step:
 
 | year | 2015 | 2016 | 2017 | 2018 | 2019 | 2020 | 2021 |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | positive rate | 54.0% | 53.5% | 64.5% | 69.2% | 57.2% | **46.5%** | **75.1%** |
 
-A 28.6-point spread, σ = 10.0pp. The 60.3% figure pre-registered from the full
-panel is an average over years that look nothing like each other — 2020 and
-2021 are the COVID collapse and rebound. "Accuracy minus constant" is therefore
-not comparable across years: the models' worst folds (2018 −5.0pp, 2021
-−4.2pp) are the years the constant baseline happened to be strongest, and their
-best fold (2020 +14.3pp) is the year it was weakest. Log-loss, which does not
-depend on where the class boundary falls, is the more trustworthy comparison —
-and on log-loss both models win every fold.
-
-### Is it just learning which companies grow?
-
-Ticker identity is not in the feature set, so the model cannot memorise
-companies outright. It can get there indirectly: `growth_streak` and
-`label_lag_*` are company-persistence proxies.
-
-Per-ticker, on pooled validation folds (340 tickers with ≥20 rows), LightGBM
-has median accuracy 65.4% and median lift over always-predict-1 of +3.7pp,
-beating that baseline on 189 of 340 tickers (55.6%).
-
-- `corr(per-ticker accuracy, per-ticker positive rate)` = **+0.517**
-- `corr(per-ticker lift, per-ticker positive rate)` = **−0.620**
-
-The second is partly arithmetic — lift *is* accuracy minus positive rate — but
-the direction is clear: the edge sits in the low-base-rate names, where
-always-predict-1 is weak, and adds little on the reliable growers. Most of the
-headline accuracy on those names is the base rate, not the model. So the answer
-is a qualified yes: much of what looks like skill is company persistence.
-
-### Known weakness carried into step 2
-
-The `eps_growth_yoy_lag_*` coefficients come out near zero (~0.05 against 0.39
-for `label_lag_1`). Those features reach 4.7e7 with σ ≈ 4.2e5, so standardizing
-maps nearly every row to a spike near zero. A linear model cannot use them in
-that shape; LightGBM, being rank-based, is unaffected — part of why it leads.
-Winsorizing or rank-transforming is the obvious fix and is deliberately **not**
-applied here, since choosing the transform against these folds would tune on
-them.
-
-`label_lag_4` carries a **negative** coefficient (−0.25), consistent with the
-Phase 1 rank correlation. A year-ago beat is mild evidence against a beat now.
+A 28.6-point spread, σ = 10.0pp — the COVID collapse and rebound. The 60.3%
+pre-registered from the whole panel is an average over years that look nothing
+like each other. Accuracy-minus-constant is therefore not comparable across
+folds, which is why the freeze decision is made on log-loss: it does not depend
+on where the class boundary happens to fall.
 
 ---
 
@@ -426,7 +523,8 @@ src/data_loader.py             all SEC EDGAR access; CIK resolution
 src/index_membership.py        membership reconstruction from the pinned revision
 data/eps_panel.parquet         the panel (tracked)
 data/features_v1.parquet       the feature table (tracked)
-data/walkforward_results.csv   per-fold, per-model scores (tracked)
+data/walkforward_results.csv   per-fold, per-variant scores (tracked)
+data/walkforward_calibration.csv  decile calibration of the best model (tracked)
 ```
 
 `src/data_loader.py` is the single source of truth for EDGAR access. Scripts
