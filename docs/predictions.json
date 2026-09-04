@@ -1,0 +1,20 @@
+{
+  "_why_this_file_exists": [
+    "A static host has no directory listing, so docs/index.html cannot discover",
+    "the prediction files in data/ by asking the server what is there. This",
+    "manifest is that listing. It is the one place a filename is written down.",
+    "",
+    "ADD A LINE HERE AFTER EVERY scripts/run_forward.py RUN. A prediction file",
+    "that is committed but missing from this manifest simply will not appear on",
+    "the page -- the run still counts as evidence, it just is not displayed.",
+    "",
+    "Newest first; the page selects the first entry by default."
+  ],
+  "predictions": [
+    {
+      "file": "live_predictions_2026-09-04.csv",
+      "cut_date": "2026-09-04",
+      "n_predictions": 474
+    }
+  ]
+}
