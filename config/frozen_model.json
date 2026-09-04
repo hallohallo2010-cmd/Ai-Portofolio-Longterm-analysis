@@ -2,9 +2,38 @@
   "_purpose": "Pre-registration of the frozen model. Committed BEFORE the holdout is read for the first time. Anything in this file that changes after the holdout has been read invalidates the holdout as a test.",
   "frozen_at": "2026-09-04",
   "phase": "Phase 2, step 3 -- freeze",
-  "revision": 2,
-
+  "revision": 3,
   "amendments": [
+    {
+      "revision": 3,
+      "amended_at": "2026-09-04",
+      "status": "PRE-HOC -- committed before any holdout row was read or scored",
+      "changed": "Fold 4's prediction set: prediction_year 2025 -> all remaining holdout rows (prediction_date >= 2025-01-01). This admits the 70 rows (62 labelled) whose period_end is Q4 2025 but whose prediction_date falls in early 2026.",
+      "from": "fold 4 predicts prediction_date in [2025-01-01, 2026-01-01); 70 rows / 62 labelled excluded",
+      "to": "fold 4 predicts prediction_date >= 2025-01-01, i.e. every holdout row not covered by folds 1-3; nothing excluded",
+      "rationale": [
+        "The revision-2 exclusion was drawn on FILING LAG, not on the research question. A Q4-2025 quarter is in scope; that its filing happened to land in January or February 2026 says something about the filer's calendar, not about whether the study should score it.",
+        "The panel's convention is that a row BELONGS to its period_end, while prediction_date governs KNOWABILITY. Excluding a 2025 quarter because of when it was filed confuses the two.",
+        "Making fold 4 the terminal 'everything remaining' fold removes the exclusion rather than relocating it: with nothing excluded, there is no filing-lag boundary left to justify."
+      ],
+      "_why_not_period_end_in_2025": {
+        "considered": "Defining fold 4 as 'period_end year == 2025' was the first form of this amendment.",
+        "rejected_because": "It is NOT a superset of prediction_year 2025. It would admit the 70 wanted rows but ORPHAN 81 rows (75 labelled) whose period_end is 2024 and whose prediction_date is early 2025: those sit outside fold 3 (which predicts prediction_year 2024), outside the new fold 4, and outside fold 4's training window (prediction_date < 2025-01-01). They would belong to no fold at all.",
+        "net_effect_if_adopted": "-11 rows overall, trading 62 explicitly pre-registered excluded labelled rows for 75 that fall through a gap -- reproducing the same class of problem one year earlier.",
+        "also_considered": "period_end boundaries for all four folds: internally uniform, but orphans 96 rows (period_end 2021, filed 2022) at the front for the same structural reason.",
+        "chosen_instead": "fold 4 = all remaining rows, which achieves the amendment's intent with zero orphans and 100% holdout coverage."
+      },
+      "unchanged": [
+        "folds 1, 2 and 3 -- identical selection and identical training windows",
+        "every fold's TRAINING window (all still prediction_date < the fold's first prediction date)",
+        "model class and all estimator parameters",
+        "the ten features and their order",
+        "the rank transform, the imputation rule, the refit-per-fold rule",
+        "the success criterion"
+      ],
+      "_no_lookahead": "Fold 4 still trains only on prediction_date < 2025-01-01 and its earliest predicted row has prediction_date 2025-01-03. Every fold continues to train strictly before every date it predicts; widening the terminal fold forward in time cannot introduce a look-ahead, because the added rows are LATER than everything the model was trained on, not earlier.",
+      "_coverage_effect": "The holdout is now scored in full: 5,898 rows / 5,521 labelled, every row in exactly one fold, no exclusions and no orphans. Verified before commit."
+    },
     {
       "revision": 2,
       "amended_at": "2026-09-04",
@@ -34,7 +63,6 @@
       "protocol": "fit once on 2011-2021, predict all labelled holdout rows in one pass"
     }
   ],
-
   "code_provenance": {
     "git_sha": "8dcf0c62db6ce6db3bcbe3e20e597305bcdb0be0",
     "git_sha_short": "8dcf0c6",
@@ -47,7 +75,6 @@
       "data/features_v1.parquet"
     ]
   },
-
   "model": {
     "variant_name": "logistic_rank",
     "type": "sklearn.pipeline.Pipeline",
@@ -67,7 +94,6 @@
     "decision_threshold": 0.5,
     "_selection_rationale": "Chosen over lightgbm_inner_es on structural grounds, NOT on a log-loss margin. The two are statistically indistinguishable: mean paired difference 0.0006 log-loss, standard error 0.0052, t = +0.12 on 6 df, LightGBM winning 4 of 7 folds. logistic_rank is deterministic, carries no early-stopping iteration, needs no inner split (so it trains on the year closest to the fold it must predict), has lower fold-to-fold spread (sd 0.0425 vs 0.0460), and wins 2020 -- the regime-break year -- by the largest single-fold margin either model achieves."
   },
-
   "features": {
     "_note": "Exact list and order. Every column is derived only from quarters strictly earlier than the row being predicted, enforced by the leakage assertion in scripts/build_features_v1.py.",
     "columns": [
@@ -92,7 +118,6 @@
       "_reason": "label_yoy is 1 exactly when eps_diluted > eps_year_ago_adjusted, and eps_growth_yoy is that same difference signed and scaled, so sign(eps_growth_yoy) IS the label (verified 21721/21721 rows). growth_acceleration carries eps_growth_yoy as a term. Both are public on prediction_date -- this is a target identity, not a look-ahead -- and both are asserted against at runtime."
     }
   },
-
   "preprocessing": {
     "_order": "rank transform -> impute -> scale -> fit. All steps live inside one sklearn Pipeline, so every parameter is learned on the training window ONLY and merely applied to the evaluation rows.",
     "_refit_rule": "The whole pipeline is refit from scratch on each fold's own training window. Nothing -- quantile grid, medians, means, variances, coefficients -- is carried across folds.",
@@ -144,7 +169,6 @@
       "_fit_scope": "each fold's own training window ONLY"
     }
   },
-
   "evaluation_protocol": {
     "_status": "HOLDOUT NOT YET READ at the time this revision was committed",
     "scheme": "expanding-window walk-forward, refit each fold",
@@ -189,33 +213,28 @@
         "fold": 4,
         "train_years": "2011-2024",
         "train_row_selection": "prediction_date < 2025-01-01",
-        "predict_year": 2025,
-        "predict_row_selection": "prediction_date in [2025-01-01, 2026-01-01)",
-        "n_predict_rows": 1465,
-        "n_predict_rows_labelled": 1378,
+        "predict_year": "2025 and later (terminal fold)",
+        "predict_row_selection": "prediction_date >= 2025-01-01 (all remaining holdout rows)",
+        "n_predict_rows": 1535,
+        "n_predict_rows_labelled": 1440,
         "n_train_rows_labelled": "20313",
-        "train_positive_rate": "unknown at freeze time -- depends on holdout labels"
+        "train_positive_rate": "unknown at freeze time -- depends on holdout labels",
+        "_terminal_fold_note": "Defined as 'everything not already predicted' rather than by a year boundary, so no holdout row is left unscored. Covers period_end 2024-09-27 .. 2025-12-31 and prediction_date 2025-01-03 .. 2026-02-28."
       }
     ],
-    "total_rows_scored": 5828,
-    "total_labelled_rows_scored": 5459,
-    "excluded_rows": {
-      "prediction_year_2026": {
-        "n_rows": 70,
-        "n_labelled": 62,
-        "_reason": "These are Q4-2025 period_ends whose filings landed in early 2026 (prediction_date up to 2026-02-28). They are inside STUDY_END (period_end <= 2025-12-31) but outside the four folds specified above, which stop at predict_year 2025. Excluded EXPLICITLY and pre-registered as excluded, rather than silently dropped or silently swept into fold 4. They are 1.1% of the labelled holdout.",
-        "_if_this_changes": "Including them would mean fold 4 predicts '2025 and later'. That is a legitimate alternative, but it must be decided BEFORE the run and recorded as a further amendment -- not after seeing fold 4's result."
-      }
-    },
+    "total_rows_scored": 5898,
+    "total_labelled_rows_scored": 5521,
     "assertions_required_at_run_time": [
       "every fold's training rows have prediction_date strictly before that fold's first prediction row",
       "no fold trains on a row it also predicts",
-      "the four prediction sets are disjoint and together cover prediction_year 2022-2025",
+      "the four prediction sets are disjoint and together cover EVERY holdout row (5,898 rows / 5,521 labelled) -- no row in two folds, no row in none",
       "the pipeline is refit per fold; no fitted state is reused across folds"
     ],
-    "_single_use": "This protocol consumes the holdout. Once fold 2 trains on 2022, those labels have been read. The holdout is a one-shot test and there is no second one available in this data."
+    "_single_use": "This protocol consumes the holdout. Once fold 2 trains on 2022, those labels have been read. The holdout is a one-shot test and there is no second one available in this data.",
+    "excluded_rows": {
+      "none": "As of revision 3 the holdout is scored in full. No rows are excluded."
+    }
   },
-
   "success_criterion": {
     "_status": "PRE-REGISTERED before the holdout was read. UNCHANGED by revision 2; only its evaluation granularity is specified further.",
     "condition_1_log_loss": "log-loss(logistic_rank) < log-loss(constant baseline)",
@@ -236,12 +255,11 @@
       "mean_log_loss": 0.6281,
       "mean_log_loss_constant": 0.6766,
       "pooled_log_loss": 0.6289,
-      "mean_accuracy": 0.650,
+      "mean_accuracy": 0.65,
       "sd_log_loss_across_folds": 0.0425,
       "folds_beating_constant_on_log_loss": "7 of 7"
     }
   },
-
   "calibration_at_freeze": {
     "_source": "pooled validation folds, data/walkforward_calibration.csv",
     "_measured_on": "lightgbm_inner_es",
@@ -253,7 +271,6 @@
     "known_inversion": "deciles 9 and 10 (0.799 vs 0.790)",
     "guidance": "Treat the top 20% as one bucket rather than trusting the ordering between deciles 9 and 10."
   },
-
   "environment": {
     "python": "3.11",
     "pandas": "3.0.5",

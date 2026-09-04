@@ -629,14 +629,52 @@ What the amendment does *not* touch: the model, the features, the transform,
 the imputation rule, the success criterion, the expanding-window rule, or the
 `prediction_date` cut. It changes only **when the model is refit**.
 
-Two consequences recorded rather than discovered later. The protocol
+One consequence recorded rather than discovered later: the protocol
 **consumes** the holdout — once fold 2 trains on 2022 those labels have been
 read, so this is a one-shot test with no second holdout available in this data.
-And **70 rows (62 labelled) in `prediction_year` 2026** — Q4-2025 period_ends
-filed in early 2026 — fall outside the four folds and are **explicitly excluded
-and pre-registered as excluded**, rather than silently dropped or swept into
-fold 4. They are 1.1% of the labelled holdout. Folds cover 5,828 rows, 5,459 of
-them labelled.
+
+### Amendment 3 (pre-hoc): fold 4 scores the remainder
+
+**Revision 3, committed before the run.** Fold 4's prediction set becomes **all
+remaining holdout rows** (`prediction_date >= 2025-01-01`) rather than
+`prediction_year` 2025, admitting the 70 rows (62 labelled) whose `period_end`
+is Q4 2025 but whose filing landed in early 2026.
+
+Why: the revision-2 exclusion was drawn on **filing lag, not on the research
+question**. A Q4-2025 quarter is in scope; that its filing happened to land in
+January or February 2026 says something about the filer's calendar, not about
+whether the study should score it. The panel's convention is that a row
+*belongs* to its `period_end` while `prediction_date` governs *knowability*, and
+excluding a 2025 quarter for when it was filed confuses the two. Making fold 4
+the terminal "everything remaining" fold **removes** the exclusion rather than
+relocating it — with nothing excluded, there is no filing-lag boundary left to
+justify.
+
+The obvious form of this amendment — defining fold 4 as `period_end in 2025` —
+was checked and **rejected**: it is not a superset of `prediction_year` 2025. It
+would admit the 70 wanted rows but **orphan 81 rows (75 labelled)** with
+`period_end` 2024 filed in early 2025, which sit outside fold 3, outside the new
+fold 4, and outside fold 4's training window. Net −11 rows, trading 62
+explicitly excluded rows for 75 falling through a gap — the same problem one
+year earlier. Applying `period_end` boundaries to all four folds orphans 96 rows
+at the front for the same structural reason.
+
+Folds 1–3 are unchanged, as is every fold's training window. **No look-ahead is
+introduced:** fold 4 still trains only on `prediction_date < 2025-01-01` and its
+earliest predicted row is 2025-01-03. Widening the terminal fold forward in time
+cannot create one, because the added rows are *later* than everything trained
+on.
+
+The holdout is now scored **in full** — 5,898 rows, 5,521 labelled, every row in
+exactly one fold, no exclusions and no orphans:
+
+| fold | trains on | predicts | rows | labelled |
+|---|---|---|---:|---:|
+| 1 | 2011–2021 | `prediction_date` 2022 | 1,454 | 1,357 |
+| 2 | 2011–2022 | `prediction_date` 2023 | 1,448 | 1,359 |
+| 3 | 2011–2023 | `prediction_date` 2024 | 1,461 | 1,365 |
+| 4 | 2011–2024 | `prediction_date` ≥ 2025-01-01 | **1,535** | **1,440** |
+| | | **total** | **5,898** | **5,521** |
 
 ### Pre-registered success criterion
 
