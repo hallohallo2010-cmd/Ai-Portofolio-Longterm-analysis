@@ -60,6 +60,16 @@ once the year-ago comparisons resolve. The commit timestamp is the whole point
 **Two quarters closes it.** That is enough to say whether the holdout result
 survives contact with genuinely unseen data.
 
+**One run is on record.** `data/live_predictions_2026-09-04.csv` — 474
+predictions at the 2026-09-04 cut, committed before any of those quarters was
+filed. 519 members at the cut, 45 skipped (32 no usable history, 2 under four
+quarters, 11 silent past 220 days), coverage 97.3%. Predicted positive rate
+80.6% at threshold 0.5 against a 60.7% training positive rate, well above the
+68.2% the model predicted on the holdout. Treat that gap as selection before
+signal: the forward universe is 474 currently-active constituents, and in the
+panel the never-removed group runs 61.7% positive against 54.8% for names that
+were eventually removed. One more quarterly run closes the test.
+
 Do not tune anything during the forward test. If the model needs changing, that
 is a new experiment with a new pre-registration, not an amendment to this one.
 
@@ -113,16 +123,42 @@ and the gate would silently return an empty universe.
 
 ## Before anything touches EDGAR
 
-`src/data_loader.py:29` is `SEC_CONTACT_EMAIL = "REPLACE_ME@example.com"`.
-EDGAR requires a real contact address in the User-Agent, and `sec_headers()`
-(line 168) aborts on the placeholder — so **a fresh container hits this on the
-first EDGAR call**. Set it to a real address before running anything that
-fetches. Throttling is 0.5 s per request, handled centrally; a full panel
-rebuild is roughly 900 calls and caches to `data/fact_cache/`.
+`SEC_CONTACT_EMAIL` in `src/data_loader.py` is set to a real address, so EDGAR
+calls work. `sec_headers()` still aborts if it is ever put back to a
+placeholder. Throttling is 0.5 s per request, handled centrally; a full panel
+rebuild is roughly 900 calls and caches to `data/fact_cache/`, a forward run
+about 500 and caches to `data/forward_cache_<cut>/`.
+
+**`lxml` matters more than its one line in `requirements.txt` suggests.**
+`pandas.read_html` needs it to parse the pinned Wikipedia revision, so without
+it `src/index_membership.py` fails on the first membership call — it was missing
+from the requirements until the first forward run hit exactly that. Anything
+that fetches needs it; nothing offline does.
 
 Offline work needs none of this: the panel, the features, and every result file
 are committed, so `build_features_v1.py`, `train_walkforward.py` and
 `run_holdout.py` all run without network access.
+
+## sklearn 1.10 will break the frozen config
+
+`config/frozen_model.json` writes `"penalty": "l2"` explicitly into the
+estimator params. scikit-learn deprecated `penalty` in 1.8 and **removes it in
+1.10**, so on 1.10 the frozen pipeline stops constructing and
+`scripts/run_holdout.py` becomes unrunnable — as does `scripts/run_forward.py`,
+which builds the pipeline through the same function. Both already emit the
+`FutureWarning` on 1.9.0, the pinned version.
+
+This is a known future break and is **not to be fixed by changing the config.**
+The config's own note says the estimator params were written out explicitly "so
+a future default change cannot silently alter the frozen model"; a parameter
+*removal* defeats that, and editing the file to route around it would edit a
+pre-registration after its holdout was read, which is the one thing the freeze
+forbids. The holdout result stands on the committed
+`data/holdout_{predictions,results,calibration}.csv` regardless of whether the
+run can be reproduced on a future library.
+
+If reproduction is needed later, pin the environment (`scikit-learn==1.9.0`,
+per the config's `environment` block) rather than touch the config.
 
 ## Known gaps
 
@@ -139,5 +175,18 @@ are committed, so `build_features_v1.py`, `train_walkforward.py` and
   and it cannot be regenerated offline. `RESULTS.md` deliberately omits the two
   figures that depended on them. If you re-run the recovery with EDGAR access,
   commit the log and those figures become citable.
+- **EPS coverage stops early for some active constituents.** The panel and the
+  forward run both draw on `us-gaap/EarningsPerShareDiluted`, and for a number
+  of names that concept simply stops carrying quarterly-duration facts while the
+  company goes on filing: VRSN ends 2013-09-30 (9 panel rows), GD 2019-09-29,
+  KIM and WEC 2020-12-31, BKR 2022-09-30. Verified against EDGAR at the
+  2026-09-04 cut — the fetch returns the full history and it genuinely ends
+  there, so this is a tagging/concept gap, not a fetch failure. It predates the
+  forward test and is part of why the panel holds 716 tickers. In the forward
+  run these names are caught by the 220-day silence guard (11 skipped at that
+  cut), which is the right outcome for the wrong reason: they are excluded as
+  "stopped reporting" when they have actually stopped reporting *under this
+  concept*. Recovering them would mean a second concept with its own
+  point-in-time properties, which is a data-construction change, not a patch.
 - **`data/dropped_periods.csv` is likewise untracked** — the drop log from the
   panel build is gitignored and absent.
