@@ -249,3 +249,7 @@ data/*
 # has to be committed before the quarters it predicts are filed, so an ignore
 # rule that silently swallowed it would destroy the evidence the test rests on.
 !data/live_predictions_*.csv
+
+# ...and the scored results that pair with them, for the same reason: data/*
+# and *.csv would otherwise swallow both halves of the forward test.
+!data/scored_*.csv
