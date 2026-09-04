@@ -230,3 +230,6 @@ data/*
 # Note "data/*" above rather than "data/": git does not descend into an ignored
 # directory, so a negation inside one never matches.
 !data/eps_panel.parquet
+
+# Phase 1 deliverable: the feature table, tracked on the same reasoning.
+!data/features_v1.parquet
