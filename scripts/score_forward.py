@@ -19,10 +19,27 @@ be a description of things already known.
 
 So this script refuses to score a prediction file that is not committed, or
 whose working-tree contents differ from what was committed. And it does not
-take the timestamp on trust: STAGE 4 finds the commit that ADDED the file and
-asserts that it predates every filing it scores against. If that fails, the
+take the timestamp on trust: STAGE 5 finds the commit that ADDED the file and
+asserts that it predates every filing that resolved a row. If that fails, the
 predictions may still be interesting, but they are not a forward test, and the
 script says so rather than printing a number.
+
+WHEN IT IS ALLOWED TO RUN
+-------------------------
+The trigger is fixed in advance, in README.md under "Phase 3: the live forward
+test -- scoring rule (pre-registered 2026-09-04)". That entry is the
+specification; this file implements it and may not soften it.
+
+It runs ONCE per committed prediction file. There is no re-score flag. It runs
+only when EVERY row is either scoreable (a qualifying filing arrived by its
+deadline and yields a label) or excluded on a stated mechanical ground. If any
+row is still outstanding, STAGE 4 prints what it is waiting for and exits
+non-zero having written nothing -- there is no partial result, no interim
+figure and no provisional number.
+
+The deadline is expected_period_end + MAX_FILING_LAG_DAYS: the first value is
+committed inside the prediction file, the second is imported from the panel's
+own configuration. Neither can be passed in.
 
 WHAT IT MATCHES ON
 ------------------
@@ -49,6 +66,9 @@ the actual filing date is reported as information and nothing more.
 
 It does not modify the prediction file or the panel. Both are hashed at the
 start and re-checked at the end.
+
+It does not decide when to run. That is the pre-registration's job, and the
+answer is mechanical: when nothing is outstanding, and not before.
 """
 
 from __future__ import annotations
@@ -106,6 +126,17 @@ FACT_CACHE_TEMPLATE = "data/score_cache_{scored_at}"
 
 LABEL = "label_yoy"
 CALIBRATION_DECILES = 10
+
+# Resolution states, per the pre-registered rule (README.md, "Phase 3: the live
+# forward test -- scoring rule"). A run is permitted only when no row is
+# OUTSTANDING; everything else is either scored or excluded on a stated
+# mechanical ground, and every ground is recorded per row in the output.
+STATUS_SCORED = "scored"
+STATUS_NO_LABEL = "excluded_no_label"          # filed in time, label null
+STATUS_LATE = "excluded_late_filing"           # filed, but after the deadline
+STATUS_NO_FILING = "excluded_no_filing"        # deadline passed, nothing filed
+STATUS_OUTSTANDING = "outstanding"             # still inside the deadline
+EXCLUDED = (STATUS_NO_LABEL, STATUS_LATE, STATUS_NO_FILING)
 
 # Header fields the prediction file must carry. Scoring against a file missing
 # any of them would mean supplying the missing piece here, and the constant
@@ -451,14 +482,40 @@ def build_quarters(all_facts: pd.DataFrame, panel: pd.DataFrame) -> pd.DataFrame
 
 
 def resolve_outcomes(predictions: pd.DataFrame, quarters: pd.DataFrame,
-                     cut: pd.Timestamp) -> pd.DataFrame:
-    """Attach, to each prediction, the first quarter that ticker filed after the cut.
+                     cut: pd.Timestamp, scored_at: pd.Timestamp) -> pd.DataFrame:
+    """Classify every prediction against the pre-registered resolution rule.
 
-    Selection is on prediction_date > cut -- the exact complement of the history
-    rule run_forward used -- and then on the earliest filed_date. Never on
-    expected_period_end, which was an estimate.
+    The qualifying filing for a row is the FIRST quarter its ticker filed after
+    the cut, selected on prediction_date > cut -- the exact complement of the
+    history rule run_forward used. expected_period_end is never used to select;
+    it only sets the deadline below.
+
+    THE DEADLINE IS APPLIED TO THE FILING'S OWN DATE, NOT TO WHETHER A FILING IS
+    VISIBLE NOW. The rule says a row is excluded when no qualifying filing "has
+    appeared by expected_period_end + MAX_FILING_LAG_DAYS". Testing that as "is
+    anything visible at the moment I happen to run this" would make the answer
+    depend on the run date, which is precisely the discretion the rule removes:
+    run in March 2027 and a late filer is excluded, run in March 2028 and the
+    same row is scored. Comparing the filing's own date against the deadline
+    makes every row's fate identical whenever the run happens, so a late filing
+    is excluded rather than scored.
+
+    The deadline is built from expected_period_end -- committed inside the
+    prediction file, so it cannot be moved afterwards -- plus the panel's own
+    MAX_FILING_LAG_DAYS, imported rather than restated. Neither is an argument
+    to this script.
     """
-    section("STAGE 3 -- resolve predictions to filed quarters")
+    section("STAGE 3 -- resolve every prediction")
+
+    resolved = predictions.copy()
+
+    expected = pd.to_datetime(resolved["expected_period_end"], errors="coerce")
+    if expected.isna().any():
+        missing = resolved.loc[expected.isna(), "ticker"].tolist()
+        stop(f"{len(missing)} rows have no usable expected_period_end "
+             f"({', '.join(missing[:10])}), so their deadline is undefined. The "
+             f"exclusion clock cannot be applied and nothing is scored.")
+    resolved["resolution_deadline"] = expected + pd.Timedelta(days=MAX_FILING_LAG_DAYS)
 
     after_cut = quarters.loc[quarters["prediction_date"] > cut]
     after_cut = after_cut.sort_values(["ticker", "filed_date", "period_end"])
@@ -469,7 +526,7 @@ def resolve_outcomes(predictions: pd.DataFrame, quarters: pd.DataFrame,
     # across two different quarters. This takes the first ROW.
     first = after_cut.drop_duplicates(subset="ticker", keep="first")
 
-    resolved = predictions.merge(
+    resolved = resolved.merge(
         first[["ticker", "period_end", "filed_date", "prediction_date",
                "eps_diluted", "period_end_year_ago", "eps_year_ago",
                "split_factor_applied", "eps_year_ago_adjusted",
@@ -486,22 +543,39 @@ def resolve_outcomes(predictions: pd.DataFrame, quarters: pd.DataFrame,
     })
 
     filed = resolved["actual_filed_date"].notna()
-    scored = filed & resolved["actual_label"].notna()
-
-    resolved["status"] = np.where(
-        ~filed, "not_yet_filed",
-        np.where(scored, "scored", "filed_but_unlabelled"),
+    in_time = filed & (
+        pd.to_datetime(resolved["actual_prediction_date"])
+        <= resolved["resolution_deadline"]
     )
+    labelled = resolved["actual_label"].notna()
+    deadline_passed = scored_at > resolved["resolution_deadline"]
 
+    status = np.where(
+        in_time & labelled, STATUS_SCORED,
+        np.where(in_time & ~labelled, STATUS_NO_LABEL,
+                 np.where(filed, STATUS_LATE,
+                          np.where(deadline_passed, STATUS_NO_FILING,
+                                   STATUS_OUTSTANDING))))
+    resolved["status"] = status
+
+    counts = pd.Series(status).value_counts()
+    print(f"scoring as of           : {scored_at.date()}")
+    print(f"deadline rule           : expected_period_end + "
+          f"{MAX_FILING_LAG_DAYS}d (panel MAX_FILING_LAG_DAYS)")
+    print(f"deadline span           : "
+          f"{resolved['resolution_deadline'].min().date()} .. "
+          f"{resolved['resolution_deadline'].max().date()}")
+    print()
     print(f"predictions             : {len(resolved)}")
-    print(f"    filed since the cut : {int(filed.sum())}")
-    print(f"    scored (labelled)   : {int(scored.sum())}")
-    print(f"    filed, no label     : {int((filed & ~scored).sum())}  "
-          f"(no year-ago match, or an unresolvable split)")
-    print(f"    not yet filed       : {int((~filed).sum())}")
+    for name, why in ((STATUS_SCORED, "filed in time, label computable"),
+                      (STATUS_NO_LABEL, "filed in time, label null under the panel's rules"),
+                      (STATUS_LATE, "filed, but after its deadline"),
+                      (STATUS_NO_FILING, "deadline passed with nothing filed"),
+                      (STATUS_OUTSTANDING, "deadline not yet reached")):
+        print(f"    {name:24s} {int(counts.get(name, 0)):4d}   {why}")
 
     # The estimate was never used to select; this is only how far it missed.
-    hit = resolved.loc[filed].copy()
+    hit = resolved.loc[filed]
     if len(hit):
         gap = (pd.to_datetime(hit["actual_period_end"])
                - pd.to_datetime(hit["expected_period_end"])).dt.days
@@ -515,7 +589,53 @@ def resolve_outcomes(predictions: pd.DataFrame, quarters: pd.DataFrame,
 
 
 # --------------------------------------------------------------------------
-# Stage 4 -- the assertion the whole test rests on
+# Stage 4 -- the gate: no partial scoring, ever
+# --------------------------------------------------------------------------
+
+
+def assert_fully_resolved(resolved: pd.DataFrame, path: str) -> None:
+    """Refuse to score anything while any row is still outstanding.
+
+    This is the "when to look" half of the pre-registration. Scoring an early
+    subset, seeing the number and coming back later is indistinguishable, in the
+    committed record, from scoring once at a fixed point -- and the companies
+    that report first are not a random sample, so the subset is biased as well
+    as premature.
+
+    So there is no partial result, no interim figure and no provisional number.
+    The run reports what it is waiting for and exits non-zero, writing nothing.
+    """
+    section("STAGE 4 -- every row must be resolved before anything is scored")
+
+    outstanding = resolved.loc[resolved["status"] == STATUS_OUTSTANDING]
+    if outstanding.empty:
+        print(f"PASS  no outstanding rows; all {len(resolved)} are scoreable or "
+              f"excluded on a stated ground")
+        return
+
+    ordered = outstanding.sort_values("resolution_deadline")
+    print(f"{len(outstanding)} of {len(resolved)} rows are still outstanding.",
+          file=sys.stderr)
+    print(f"{'ticker':>8s}  {'expected_period_end':>19s}  {'deadline':>10s}",
+          file=sys.stderr)
+    for row in ordered.head(40).itertuples():
+        print(f"{row.ticker:>8s}  {str(row.expected_period_end):>19s}  "
+              f"{pd.Timestamp(row.resolution_deadline).date()}", file=sys.stderr)
+    if len(ordered) > 40:
+        print(f"    ... and {len(ordered) - 40} more", file=sys.stderr)
+    print(f"\nThe last deadline falls on "
+          f"{ordered['resolution_deadline'].max().date()}.", file=sys.stderr)
+
+    stop(
+        f"{len(outstanding)} rows in {path} are neither scoreable nor excluded. "
+        f"Partial scoring is not permitted by the pre-registered rule "
+        f"(README.md, Phase 3), so nothing was scored and nothing was written. "
+        f"Re-run once every deadline above has passed."
+    )
+
+
+# --------------------------------------------------------------------------
+# Stage 5 -- the assertion the whole test rests on
 # --------------------------------------------------------------------------
 
 
@@ -532,25 +652,30 @@ def assert_commit_precedes_filings(resolved: pd.DataFrame,
     commit and a filing on the same day cannot be ordered from this data, and
     unorderable is treated as failing -- the burden is on the evidence.
     """
-    section("STAGE 4 -- the prediction commit must predate every filing")
+    section("STAGE 5 -- the prediction commit must predate every filing")
 
-    scored = resolved.loc[resolved["status"] == "scored"]
-    if scored.empty:
-        print("no scored rows yet; nothing to check against.")
+    # EVERY row with a filing, not only the scored ones. A row excluded because
+    # its label is null, or because it filed late, still had its fate decided by
+    # a filing; if that filing predates the commit then the outcome existed when
+    # the prediction was recorded, and the file is not a forward test whatever
+    # bucket the row lands in.
+    with_filing = resolved.loc[resolved["actual_filed_date"].notna()]
+    if with_filing.empty:
+        print("no filings resolved any row; nothing to check against.")
         return
 
-    filed = pd.to_datetime(scored["actual_filed_date"])
+    filed = pd.to_datetime(with_filing["actual_filed_date"])
     commit_day = committed.normalize()
     earliest = filed.min()
 
-    violations = scored.loc[filed <= commit_day]
+    violations = with_filing.loc[filed <= commit_day]
     if len(violations):
         names = ", ".join(
             f"{row.ticker} (filed {pd.Timestamp(row.actual_filed_date).date()})"
             for row in violations.head(10).itertuples()
         )
         stop(
-            f"{len(violations)} scored quarters were filed on or before the day "
+            f"{len(violations)} quarters were filed on or before the day "
             f"{path} was committed ({commit_day.date()}): {names}"
             f"{' ...' if len(violations) > 10 else ''}. Those outcomes existed, "
             f"or may have existed, when the prediction was recorded, so this is "
@@ -560,14 +685,15 @@ def assert_commit_precedes_filings(resolved: pd.DataFrame,
         )
 
     print(f"prediction committed    : {commit_day.date()}")
-    print(f"earliest scored filing  : {earliest.date()}  "
+    print(f"earliest filing used    : {earliest.date()}  "
           f"({(earliest - commit_day).days} days later)")
-    print(f"latest scored filing    : {filed.max().date()}")
-    print(f"\nPASS  all {len(scored)} scored filings postdate the prediction commit")
+    print(f"latest filing used      : {filed.max().date()}")
+    print(f"\nPASS  all {len(with_filing)} filings that resolved a row postdate "
+          f"the prediction commit")
 
 
 # --------------------------------------------------------------------------
-# Stage 5 -- score
+# Stage 6 -- score
 # --------------------------------------------------------------------------
 
 
@@ -579,12 +705,30 @@ def score(resolved: pd.DataFrame, train_rate: float, threshold: float) -> dict:
     would score the baseline using the answer -- which is why the rate is read
     from the file rather than computed here.
     """
-    section("STAGE 5 -- model vs the constant baseline")
+    section("STAGE 6 -- model vs the constant baseline")
 
-    scored = resolved.loc[resolved["status"] == "scored"].copy()
+    counts = resolved["status"].value_counts()
+    tally = {
+        "n_predicted": int(len(resolved)),
+        "n_scored": int(counts.get(STATUS_SCORED, 0)),
+        "n_excluded_no_label": int(counts.get(STATUS_NO_LABEL, 0)),
+        "n_excluded_late_filing": int(counts.get(STATUS_LATE, 0)),
+        "n_excluded_no_filing": int(counts.get(STATUS_NO_FILING, 0)),
+    }
+    tally["n_excluded"] = (tally["n_excluded_no_label"]
+                           + tally["n_excluded_late_filing"]
+                           + tally["n_excluded_no_filing"])
+
+    scored = resolved.loc[resolved["status"] == STATUS_SCORED].copy()
     if scored.empty:
-        print("nothing labelled yet; no metrics.")
-        return {}
+        # Every row excluded on a stated ground is a terminal, fully-resolved
+        # state, not a partial one -- STAGE 4 has already established that
+        # nothing is outstanding. There is simply nothing to compute a metric
+        # on, and that is itself the result, so it is written rather than
+        # treated as a failure.
+        print("every row was excluded on a stated ground; no row is scoreable.")
+        print("There is no metric to compute. This is a result and is recorded.")
+        return tally
 
     y_true = scored["actual_label"].astype("int64").to_numpy()
     proba = scored["predicted_probability"].astype("float64").to_numpy()
@@ -593,11 +737,8 @@ def score(resolved: pd.DataFrame, train_rate: float, threshold: float) -> dict:
     constant_proba = np.full(len(y_true), train_rate, dtype="float64")
     constant_label = np.ones(len(y_true), dtype="int64")
 
-    result = {
-        "n_predicted": int(len(resolved)),
-        "n_scored": int(len(scored)),
-        "n_not_yet_filed": int((resolved["status"] == "not_yet_filed").sum()),
-        "n_filed_unlabelled": int((resolved["status"] == "filed_but_unlabelled").sum()),
+    result = dict(tally)
+    result.update({
         "actual_positive_rate": float(y_true.mean()),
         "constant_probability": float(train_rate),
         "model_log_loss": float(log_loss(y_true, proba, labels=[0, 1])),
@@ -607,7 +748,7 @@ def score(resolved: pd.DataFrame, train_rate: float, threshold: float) -> dict:
         "model_brier": float(brier_score_loss(y_true, proba)),
         "predicted_positive_rate": float(label.mean()),
         "decision_threshold": float(threshold),
-    }
+    })
     result["log_loss_delta"] = result["model_log_loss"] - result["constant_log_loss"]
     result["accuracy_delta"] = result["model_accuracy"] - result["constant_accuracy"]
     result["passes_log_loss"] = bool(result["log_loss_delta"] < 0)
@@ -615,7 +756,8 @@ def score(resolved: pd.DataFrame, train_rate: float, threshold: float) -> dict:
     result["passes_both"] = bool(result["passes_log_loss"] and result["passes_accuracy"])
 
     print(f"scored rows             : {result['n_scored']} of "
-          f"{result['n_predicted']} predicted")
+          f"{result['n_predicted']} predicted "
+          f"({result['n_excluded']} excluded on a stated ground)")
     print(f"actual positive rate    : {result['actual_positive_rate']:.1%}")
     print(f"predicted positive rate : {result['predicted_positive_rate']:.1%}")
     print()
@@ -632,17 +774,11 @@ def score(resolved: pd.DataFrame, train_rate: float, threshold: float) -> dict:
     print(f"accuracy above constant : {'PASS' if result['passes_accuracy'] else 'FAIL'}")
     print(f"both (log-loss primary) : {'PASS' if result['passes_both'] else 'FAIL'}")
 
-    if result["n_not_yet_filed"]:
-        print(f"\nNOTE {result['n_not_yet_filed']} predictions are still unfiled. "
-              f"This is a PARTIAL score.\n     The names that report first are "
-              f"not a random sample of the universe, so\n     treat these "
-              f"numbers as provisional until the file is fully resolved.")
-
     return result
 
 
 def report_calibration(resolved: pd.DataFrame) -> pd.DataFrame:
-    section("STAGE 6 -- calibration")
+    section("STAGE 7 -- calibration")
 
     scored = resolved.loc[resolved["status"] == "scored"].copy()
     if len(scored) < CALIBRATION_DECILES * 2:
@@ -741,7 +877,7 @@ def report_membership(resolved: pd.DataFrame) -> None:
 
 
 # --------------------------------------------------------------------------
-# Stage 7 -- write
+# Stage 8 -- write
 # --------------------------------------------------------------------------
 
 
@@ -750,7 +886,7 @@ def write_scored(resolved: pd.DataFrame, calibration: pd.DataFrame,
                  committed: pd.Timestamp, scored_at_utc: pd.Timestamp,
                  predictions_path: str, predictions_digest: str,
                  output_path: str) -> None:
-    section("STAGE 7 -- write")
+    section("STAGE 8 -- write")
 
     output = resolved.copy()
     is_scored = output["status"] == "scored"
@@ -769,6 +905,17 @@ def write_scored(resolved: pd.DataFrame, calibration: pd.DataFrame,
         == output.loc[is_scored, "actual_label"]
     )
 
+    # Why each excluded row was excluded, in the row itself, so an exclusion can
+    # be audited without re-deriving it. resolution_deadline rides along for the
+    # same reason.
+    output["excluded_reason"] = output["status"].map({
+        STATUS_NO_LABEL: "filed in time; label null under the panel's rules",
+        STATUS_LATE: "filed after expected_period_end + "
+                     f"{MAX_FILING_LAG_DAYS}d",
+        STATUS_NO_FILING: "no qualifying filing by expected_period_end + "
+                          f"{MAX_FILING_LAG_DAYS}d",
+    }).fillna("")
+
     lines = [
         "Scored forward-test results. Scoring only -- nothing was refit.",
         "",
@@ -783,11 +930,13 @@ def write_scored(resolved: pd.DataFrame, calibration: pd.DataFrame,
         f"decision_threshold       : {header['decision_threshold']}",
         f"constant_probability     : {result.get('constant_probability', 'n/a')}",
         "",
-        "RESOLUTION",
+        "RESOLUTION  (every row is scored or excluded; none outstanding)",
         f"  predicted              : {result.get('n_predicted', len(resolved))}",
         f"  scored                 : {result.get('n_scored', 0)}",
-        f"  filed but unlabelled   : {result.get('n_filed_unlabelled', 0)}",
-        f"  not yet filed          : {result.get('n_not_yet_filed', 0)}",
+        f"  excluded, no label     : {result.get('n_excluded_no_label', 0)}",
+        f"  excluded, late filing  : {result.get('n_excluded_late_filing', 0)}",
+        f"  excluded, never filed  : {result.get('n_excluded_no_filing', 0)}",
+        f"  exclusion deadline     : expected_period_end + {MAX_FILING_LAG_DAYS}d",
         "",
         "RESULT",
         f"  actual positive rate   : {result.get('actual_positive_rate', 'n/a')}",
@@ -815,14 +964,15 @@ def write_scored(resolved: pd.DataFrame, calibration: pd.DataFrame,
         "",
     ]
 
-    if result.get("n_not_yet_filed"):
-        lines += [
-            "PARTIAL",
-            f"  {result['n_not_yet_filed']} predictions are still unfiled, so this",
-            "  is a partial score. Early reporters are not a random sample of the",
-            "  universe; treat these numbers as provisional until fully resolved.",
-            "",
-        ]
+    lines += [
+        "COMPLETENESS",
+        "  This file is a COMPLETE score of its prediction file. The run was",
+        "  permitted only because no row was outstanding: every row is either",
+        "  scored or excluded on a ground stated in advance (README.md, Phase 3:",
+        "  the live forward test). Partial scoring is not permitted, so there is",
+        "  no earlier, provisional version of these numbers.",
+        "",
+    ]
 
     os.makedirs("data", exist_ok=True)
     with open(output_path, "w") as handle:
@@ -838,13 +988,12 @@ def write_scored(resolved: pd.DataFrame, calibration: pd.DataFrame,
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Score a committed forward-test prediction file. "
-                    "Scores only; never predicts and never refits."
+        description="Score a committed forward-test prediction file, once, "
+                    "under the rule pre-registered in README.md (Phase 3). "
+                    "Scores only; never predicts and never refits. Refuses to "
+                    "run while any row is outstanding, and refuses a second run."
     )
     parser.add_argument("predictions", help="path to data/live_predictions_<cut>.csv")
-    parser.add_argument("--rescore", action="store_true",
-                        help="overwrite an existing scored file (for re-scoring "
-                             "once more of the predictions have resolved)")
     args = parser.parse_args()
 
     scored_at_utc = pd.Timestamp.now("UTC")
@@ -856,17 +1005,23 @@ def main() -> None:
     panel_digest = check_consistency(header)
     committed = locate_commit(args.predictions, cut, header)
 
+    # One run per committed prediction file. There is no override: a second run
+    # is what "score early, look, come back later" would need, and the rule
+    # forbids it. A run that refused (STAGE 4, or any stop() above) writes
+    # nothing, so a refusal never blocks the real run.
     output_path = SCORED_TEMPLATE.format(cut=cut.date())
-    if os.path.exists(output_path) and not args.rescore:
-        stop(f"{output_path} already exists. Pass --rescore to overwrite it, "
-             f"which is the right move only when more predictions have resolved "
-             f"since -- git keeps the previous version either way.")
+    if os.path.exists(output_path):
+        stop(f"{output_path} already exists, so {args.predictions} has already "
+             f"been scored. The pre-registered rule (README.md, Phase 3) allows "
+             f"one scoring run per prediction file and provides no way to repeat "
+             f"it. Nothing was re-scored and nothing was written.")
 
     panel = pd.read_parquet(PANEL_PARQUET)
     all_facts = fetch_facts(predictions["ticker"].tolist(), scored_at)
     quarters = build_quarters(all_facts, panel)
-    resolved = resolve_outcomes(predictions, quarters, cut)
+    resolved = resolve_outcomes(predictions, quarters, cut, scored_at)
 
+    assert_fully_resolved(resolved, args.predictions)
     assert_commit_precedes_filings(resolved, committed, args.predictions)
 
     result = score(resolved, train_rate, threshold)
