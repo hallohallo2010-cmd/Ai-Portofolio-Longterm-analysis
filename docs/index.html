@@ -145,6 +145,13 @@
   th.sortable { cursor: pointer; user-select: none; }
   td.num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
   tbody tr.miss { background: var(--miss-bg); color: var(--miss-ink); }
+  /* The hidden attribute needs an explicit rule on table cells. */
+  th[hidden], td[hidden] { display: none; }
+  .pending { color: var(--ink-faint); font-style: italic; white-space: nowrap; }
+  .toggle { display: inline-flex; align-items: center; gap: 7px; font-size: 14px;
+            color: var(--ink-soft); cursor: pointer; padding: 6px 2px;
+            min-height: 38px; }
+  .toggle input { width: 18px; height: 18px; min-height: 0; margin: 0; }
   .badge { display: inline-block; min-width: 58px; text-align: center;
            padding: 2px 8px; border-radius: 10px; font-size: 11.5px;
            font-family: var(--mono); }
@@ -272,7 +279,7 @@ var IS_FILE = location.protocol === "file:";
 
 /* ===== page copy keyed to committed column names. Words, never numbers. ==== */
 var EXPLAIN = {
-  eps_growth_yoy_lag_1: "How much its earnings rose or fell in the most recent quarter, measured against the same quarter a year before that.",
+  eps_growth_yoy_lag_1: "How much its earnings rose or fell in the most recent quarter, measured against the same quarter a year before that. Very large figures are real, not errors: the change is measured against the year-ago quarter, so a company coming off a near-zero quarter can show hundreds or thousands of percent.",
   eps_growth_yoy_lag_2: "The same rise-or-fall figure, one quarter further back.",
   eps_growth_yoy_lag_3: "The same figure again, three quarters back.",
   eps_growth_yoy_lag_4: "The same figure four quarters back — the quarter that the one being predicted will be compared against.",
@@ -282,7 +289,8 @@ var EXPLAIN = {
   label_lag_4: "Did it beat four quarters ago?",
   growth_streak: "How many quarters in a row it has beaten, counting back from the most recent one.",
   quarters_available: "How many quarters of history this company has in the dataset at all — a measure of how much the model had to work with.",
-  ticker: "The company's stock symbol.",
+  actual_result: "What actually happened. It is empty in every row because no company here has filed the quarter being predicted yet — the result does not exist, rather than being withheld. It gets filled in when the scoring run happens, which cannot be before the last company reports.",
+  ticker: "The short code the company trades under. Full company names are not stored in any of the committed files this page reads, so the ticker is the identifier available.",
   cik: "The company's filer ID at the SEC.",
   cut_date: "The day these predictions were made and committed. The same for every row.",
   predicted_probability: "The model's estimated chance that this company's next quarter beats its year-ago quarter, on a scale from 0 to 1.",
@@ -676,23 +684,123 @@ function renderPart6(meta, preds, fileName) {
 
 /* ================================ Part 7 ================================= */
 var PROBA = "predicted_probability", LABEL = "predicted_label";
-var LEAD = ["ticker", PROBA, LABEL, "expected_period_end"];
+
+/* Plain-English column headings. The reader should be able to read the table
+   without ever tapping a "?" -- the "?" carries detail, not basic meaning.
+   Keyed by the committed column name, so a heading can never drift onto the
+   wrong data. */
+var HEADINGS = {
+  ticker: "Company",
+  predicted_probability: "Chance of growth",
+  predicted_label: "Prediction",
+  actual_result: "Actual result",
+  expected_period_end: "Quarter being predicted",
+  last_known_period_end: "Last quarter on file",
+  last_known_prediction_date: "Last report filed",
+  eps_growth_yoy_lag_1: "Growth last quarter",
+  eps_growth_yoy_lag_2: "Growth 2 quarters ago",
+  eps_growth_yoy_lag_3: "Growth 3 quarters ago",
+  eps_growth_yoy_lag_4: "Growth 4 quarters ago",
+  label_lag_1: "Beat last quarter",
+  label_lag_2: "Beat 2 quarters ago",
+  label_lag_3: "Beat 3 quarters ago",
+  label_lag_4: "Beat 4 quarters ago",
+  growth_streak: "Beats in a row",
+  quarters_available: "Quarters of history",
+  cut_date: "Prediction made on",
+  cik: "SEC filing ID",
+  quarter_gap_days_used: "Days between quarters"
+};
+
+/* Prediction and outcome sit next to each other so the empty one is obvious. */
+var ACTUAL = "actual_result";
+var LEAD = ["ticker", PROBA, LABEL, ACTUAL, "expected_period_end",
+            "last_known_period_end", "last_known_prediction_date"];
+
+/* Same for every row, or an internal identifier a reader does not need. Shown
+   only when "show every column" is ticked. */
+var SECONDARY = ["cut_date", "cik", "quarter_gap_days_used"];
+
+/* Columns whose committed value is a 1/0 flag meaning "did it beat". */
+var YESNO = /^label_lag_[1-4]$/;
+/* Columns holding a fractional change, which reads far better as a percent. */
+var GROWTH = /^eps_growth_yoy_lag_[1-4]$/;
+
+var MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+function prettyDate(v) {
+  var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(v));
+  if (!m) return v;
+  return Number(m[3]) + " " + MONTHS[Number(m[2]) - 1] + " " + m[1];
+}
+/* A share of 100, unsigned -- for a probability, where a "+" would be wrong. */
+function asShare(v) { return Math.round(Number(v) * 100) + "%"; }
+/* A change, signed -- for growth, where the direction is the point. These can
+   be enormous: the change is measured against the year-ago figure, so a company
+   coming off a near-zero quarter shows hundreds or thousands of percent. Those
+   are the committed values, not display errors. */
+function asChange(v) {
+  var x = Number(v) * 100;
+  return (x > 0 ? "+" : "") + x.toFixed(0) + "%";
+}
+
+/* The outcome column.
+
+   This is not in the prediction file, and it is not invented either: a file
+   written by run_forward.py carries no outcome column at all, and
+   score_forward.py refuses to score a file that has one. So the page reads
+   whichever outcome column is present and, finding none, says so in every row
+   rather than leaving a blank the reader has to interpret. If a future file
+   does carry an outcome, it is rendered instead of this text. */
+var OUTCOME_COLUMNS = ["actual_label", "actual_result", "outcome", "correct"];
+function outcomeColumn(header) {
+  for (var i = 0; i < OUTCOME_COLUMNS.length; i++) {
+    if (header.indexOf(OUTCOME_COLUMNS[i]) >= 0) return OUTCOME_COLUMNS[i];
+  }
+  return null;
+}
 
 function renderPart7(fileHeader, rows) {
-  var header = LEAD.filter(function (c) { return fileHeader.indexOf(c) >= 0; })
-    .concat(fileHeader.filter(function (c) { return LEAD.indexOf(c) < 0; }));
   var f = frag();
+  var realOutcome = outcomeColumn(fileHeader);
+
+  // Column order: identity, the prediction, the outcome beside it, then dates,
+  // then the model's inputs. Anything in SECONDARY is appended and hidden.
+  var lead = LEAD.filter(function (c) {
+    return c === ACTUAL ? !realOutcome : fileHeader.indexOf(c) >= 0;
+  });
+  var rest = fileHeader.filter(function (c) {
+    return lead.indexOf(c) < 0 && SECONDARY.indexOf(c) < 0;
+  });
+  var hidden = fileHeader.filter(function (c) { return SECONDARY.indexOf(c) >= 0; });
+  var header = lead.concat(rest, hidden);
+
+  var featureCount = header.filter(function (h) {
+    return /lag_[1-4]$|growth_streak|quarters_available/.test(h);
+  }).length;
 
   f.appendChild(para(
-    "One row per company. The last " +
-    word(header.filter(function (h) { return /lag|streak|quarters_available/.test(h); }).length) +
-    " columns are the model's own inputs for that company, so you can see exactly what it was " +
-    "working from. <b>Tap the ? beside any column heading</b> to see what that column means. " +
-    "A dash means that figure is missing for that company — the model treats it as unknown " +
-    "rather than guessing."));
+    "One row per company, identified by its stock ticker — the short code it " +
+    "trades under. The " + word(featureCount) + " right-hand columns are " +
+    "the model's own inputs for that company, so you can see what it was working " +
+    "from. A dash means the figure is missing for that company, and the model " +
+    "treated it as unknown rather than guessing. The growth percentages are " +
+    "measured against the year-ago quarter, so a company coming off a near-zero " +
+    "quarter can show a figure in the hundreds or thousands — those are real, " +
+    "not errors. Tap the <b>?</b> beside a heading for more detail on any " +
+    "column; you should not need it to read the table."));
+
+  // Required directly above the table, not as a footnote.
+  var warn = el("div", "callout");
+  warn.appendChild(el("strong", "hd", "Nothing here is right or wrong yet"));
+  warn.appendChild(para(
+    "<b>No company below has filed the quarter being predicted.</b> The " +
+    "“Actual result” column is empty for every row because the results do not " +
+    "exist — not because they are missing or hidden. Nothing in this table has " +
+    "been graded, and no row can be called correct or incorrect until the " +
+    "companies report."));
+  f.appendChild(warn);
 
   var help = el("div", "helpbar");
-  help.id = "helpbar";
   f.appendChild(help);
   var openBtn = null;
   function closeHelp() {
@@ -704,21 +812,31 @@ function renderPart7(fileHeader, rows) {
     if (openBtn) openBtn.setAttribute("aria-expanded", "false");
     openBtn = btn; btn.setAttribute("aria-expanded", "true");
     help.textContent = "";
-    help.appendChild(el("span", "hname", name));
-    help.appendChild(document.createTextNode(EXPLAIN[name]));
+    help.appendChild(el("span", "hname", HEADINGS[name] || name));
+    help.appendChild(document.createTextNode(EXPLAIN[name] || ""));
     help.className = "helpbar on";
   }
 
   var controls = el("div", "controls");
   var search = el("input");
   search.type = "search"; search.placeholder = "Find a company…";
-  search.setAttribute("aria-label", "Find a company by ticker");
+  search.setAttribute("aria-label", "Find a company by name");
   controls.appendChild(search);
   var pick = el("select");
-  pick.setAttribute("aria-label", "Filter by the model's call");
-  [["all", "All companies"], ["1", "Model expects a beat"], ["0", "Model expects no beat"]]
+  pick.setAttribute("aria-label", "Filter by the model's prediction");
+  [["all", "All companies"], ["1", "Model expects growth"], ["0", "Model expects no growth"]]
     .forEach(function (o) { var op = el("option", null, o[1]); op.value = o[0]; pick.appendChild(op); });
   controls.appendChild(pick);
+
+  var showAllWrap = el("label", "toggle");
+  var showAll = el("input");
+  showAll.type = "checkbox";
+  showAll.id = "showAllCols";
+  showAllWrap.appendChild(showAll);
+  showAllWrap.appendChild(document.createTextNode(" Show every column"));
+  showAllWrap.setAttribute("for", "showAllCols");
+  controls.appendChild(showAllWrap);
+
   var count = el("span", "count", "");
   controls.appendChild(count);
   f.appendChild(controls);
@@ -727,33 +845,56 @@ function renderPart7(fileHeader, rows) {
   var thead = el("thead"), htr = el("tr");
   var numeric = {};
   header.forEach(function (h) {
-    numeric[h] = rows.some(function (r) { return isNum(r[h]); }) &&
-                 rows.every(function (r) { return r[h] === "" || isNum(r[h]); });
+    numeric[h] = h !== ACTUAL &&
+      rows.some(function (r) { return isNum(r[h]); }) &&
+      rows.every(function (r) { return r[h] === "" || isNum(r[h]); });
   });
   var sortCol = PROBA, sortDir = -1;
 
   header.forEach(function (h) {
-    var th = el("th", "sortable");
-    th.appendChild(document.createTextNode(h));
+    var th = el("th", h === ACTUAL ? "" : "sortable");
+    if (SECONDARY.indexOf(h) >= 0) th.dataset.secondary = "1";
+    th.appendChild(document.createTextNode(HEADINGS[h] || h));
     if (EXPLAIN[h]) {
       var q = el("button", "q", "?");
       q.type = "button";
       q.setAttribute("aria-expanded", "false");
-      q.setAttribute("aria-label", "What does " + h + " mean?");
+      q.setAttribute("aria-label", "More about " + (HEADINGS[h] || h));
       q.addEventListener("click", function (ev) { ev.stopPropagation(); openHelp(q, h); });
       th.appendChild(q);
     }
-    var arrow = el("span", "arrow", "");
-    th.appendChild(arrow);
-    th.addEventListener("click", function () {
-      if (sortCol === h) sortDir = -sortDir; else { sortCol = h; sortDir = 1; }
-      draw();
-    });
+    th.appendChild(el("span", "arrow", ""));
+    if (h !== ACTUAL) {
+      th.addEventListener("click", function () {
+        if (sortCol === h) sortDir = -sortDir; else { sortCol = h; sortDir = 1; }
+        draw();
+      });
+    }
     htr.appendChild(th);
   });
   thead.appendChild(htr); table.appendChild(thead);
   var tbody = el("tbody"); table.appendChild(tbody);
   scroll.appendChild(table); f.appendChild(scroll);
+
+  function applyVisibility() {
+    var on = showAll.checked;
+    Array.prototype.forEach.call(table.querySelectorAll("[data-secondary]"),
+      function (cell) { cell.hidden = !on; });
+  }
+
+  function cellFor(h, r) {
+    if (h === ACTUAL) {
+      var span = el("span", "pending", "not yet filed");
+      return { node: span, cls: null };
+    }
+    var v = r[h];
+    if (v === "" || v === undefined) return { node: null, text: "—", cls: null };
+    if (h === PROBA && isNum(v)) return { node: null, text: asShare(v), cls: "num" };
+    if (YESNO.test(h)) return { node: null, text: Number(v) === 1 ? "Yes" : "No", cls: null };
+    if (GROWTH.test(h) && isNum(v)) return { node: null, text: asChange(v), cls: "num" };
+    if (/period_end$|_date$/.test(h)) return { node: null, text: prettyDate(v), cls: null };
+    return { node: null, text: v, cls: numeric[h] ? "num" : null };
+  }
 
   function draw() {
     var q = search.value.trim().toUpperCase(), want = pick.value;
@@ -771,8 +912,10 @@ function renderPart7(fileHeader, rows) {
       return cmp * sortDir;
     });
     Array.prototype.forEach.call(htr.children, function (th, i) {
-      th.querySelector(".arrow").textContent = header[i] === sortCol ? (sortDir > 0 ? " ▲" : " ▼") : "";
+      th.querySelector(".arrow").textContent =
+        header[i] === sortCol ? (sortDir > 0 ? " ▲" : " ▼") : "";
     });
+
     tbody.textContent = "";
     var fr = frag();
     view.forEach(function (r) {
@@ -781,24 +924,28 @@ function renderPart7(fileHeader, rows) {
       header.forEach(function (h) {
         if (h === LABEL) {
           var cell = el("td"), isMiss = String(r[h]) === "0";
-          cell.appendChild(el("span", "badge " + (isMiss ? "miss" : "beat"), isMiss ? "no beat" : "beat"));
-          tr.appendChild(cell); return;
+          cell.appendChild(el("span", "badge " + (isMiss ? "miss" : "beat"),
+                              isMiss ? "No growth" : "Growth"));
+          tr.appendChild(cell);
+          return;
         }
-        var val;
-        if (r[h] === "") val = "—";
-        else if (h === PROBA && isNum(r[h])) val = Number(r[h]).toFixed(4);
-        else if (numeric[h] && /lag_[1-4]$/.test(h)) val = readable(r[h]);
-        else val = r[h];
-        var td = el("td", numeric[h] ? "num" : null, val);
-        if (r[h] !== "" && val !== r[h]) td.title = r[h];
+        var made = cellFor(h, r);
+        var td = el("td", made.cls, made.node ? undefined : made.text);
+        if (made.node) td.appendChild(made.node);
+        if (SECONDARY.indexOf(h) >= 0) td.dataset.secondary = "1";
+        // The untouched committed value stays available where it was reshaped.
+        if (r[h] !== "" && r[h] !== undefined && !made.node &&
+            String(made.text) !== String(r[h])) td.title = r[h];
         tr.appendChild(td);
       });
       fr.appendChild(tr);
     });
     tbody.appendChild(fr);
+    applyVisibility();
+
     var misses = view.filter(function (r) { return String(r[LABEL]) === "0"; }).length;
     count.textContent = view.length + " of " + rows.length + " companies — " +
-      (view.length - misses) + " expected to beat, " + misses + " not";
+      (view.length - misses) + " expected to grow, " + misses + " not";
     if (!view.length) {
       var tr = el("tr"), td = el("td", null, "No companies match.");
       td.colSpan = header.length; td.style.color = "var(--ink-faint)";
@@ -807,6 +954,7 @@ function renderPart7(fileHeader, rows) {
   }
   search.addEventListener("input", draw);
   pick.addEventListener("change", draw);
+  showAll.addEventListener("change", applyVisibility);
   draw();
   return f;
 }
